@@ -19,7 +19,7 @@
         android:paddingStart="18dp"
         android:paddingTop="14dp"
         android:paddingEnd="18dp"
-        android:paddingBottom="14dp">
+        android:paddingBottom="4dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -34,14 +34,6 @@
                 android:layout_weight="1"
                 android:textColor="@color/accent"
                 android:textSize="13sp" />
-
-            <View
-                android:id="@+id/level"
-                android:layout_width="48dp"
-                android:layout_height="4dp"
-                android:background="@drawable/bg_level"
-                android:scaleX="0.1"
-                android:visibility="invisible" />
         </LinearLayout>
 
         <TextView
@@ -91,12 +83,17 @@
                 android:textColor="@color/accent" />
         </LinearLayout>
 
+        <!-- vertical padding: room for the listening halo around the mic, inside the card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="2dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
 
             <EditText
                 android:id="@+id/input"
@@ -124,14 +121,29 @@
                 android:src="@drawable/ic_send"
                 android:visibility="gone" />
 
-            <ImageButton
-                android:id="@+id/mic"
+            <FrameLayout
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/bg_round_button"
-                android:contentDescription="说话"
-                android:src="@drawable/ic_mic" />
+                android:clipChildren="false">
+
+                <!-- grows with the voice level while listening -->
+                <View
+                    android:id="@+id/halo"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:alpha="0"
+                    android:background="@drawable/bg_halo"
+                    android:visibility="invisible" />
+
+                <ImageButton
+                    android:id="@+id/mic"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_round_button"
+                    android:contentDescription="说话"
+                    android:src="@drawable/ic_mic" />
+            </FrameLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

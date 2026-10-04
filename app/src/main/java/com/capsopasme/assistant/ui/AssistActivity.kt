@@ -1,16 +1,26 @@
 package com.capsopasme.assistant.ui
 
 import android.Manifest
+import android.animation.LayoutTransition
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.method.ScrollingMovementMethod
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -18,6 +28,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
+import android.window.OnBackInvokedDispatcher
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.R
 import com.capsopasme.assistant.agent.Agent
@@ -42,8 +53,11 @@ class AssistActivity : Activity() {
     private enum class Phase { Idle, Listening, Thinking, Confirming, Done }
 
     private lateinit var prefs: Prefs
+    private lateinit var root: View
+    private lateinit var card: View
+    private lateinit var scrim: Drawable
     private lateinit var status: TextView
-    private lateinit var level: View
+    private lateinit var halo: View
     private lateinit var userText: TextView
     private lateinit var answer: TextView
     private lateinit var confirmRow: View
@@ -52,7 +66,22 @@ class AssistActivity : Activity() {
     private lateinit var send: ImageButton
 
     private val main = Handler(Looper.getMainLooper())
+
+    /** all writes on the main thread; the listening halo and the "thinking" pulse follow it */
     private var phase = Phase.Idle
+        set(value) {
+            val old = field
+            field = value
+            if (old != value) onPhaseChanged(value)
+        }
+
+    /** pauses / mutes media playing on the loudspeaker while the sheet is open */
+    private lateinit var silencer: MediaSilencer
+
+    /** the exit animation is running: the sheet finishes when it ends */
+    private var dismissing = false
+    private var scrimAnimator: ValueAnimator? = null
+    private var statusPulse: ObjectAnimator? = null
     private var heardSomething = false
 
     /**
@@ -79,7 +108,7 @@ class AssistActivity : Activity() {
     private val capture = AudioCapture(
         onAudio = { pcm, rms ->
             asr.sendAudio(pcm)
-            level.post { level.scaleX = (rms * 12f).coerceIn(0.08f, 1f) }
+            halo.post { onLevel(rms) }
         },
         onFailure = { e -> main.post { showError("麦克风不可用：${e.message}") ; stopListening(cancel = true) } },
     )
@@ -141,13 +170,20 @@ class AssistActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // no window animation: the sheet slides itself in and out (see playEnter / dismiss)
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
         setContentView(R.layout.activity_assist)
         prefs = Prefs(this)
         asr = AsrClient(this, asrListener)
+        silencer = MediaSilencer(this)
+        silencer.engage()
 
-        val root = findViewById<View>(R.id.root)
+        root = findViewById(R.id.root)
+        card = findViewById(R.id.card)
+        scrim = root.background.mutate()
         status = findViewById(R.id.status)
-        level = findViewById(R.id.level)
+        halo = findViewById(R.id.halo)
         userText = findViewById(R.id.userText)
         answer = findViewById(R.id.answer)
         confirmRow = findViewById(R.id.confirmRow)
@@ -163,10 +199,11 @@ class AssistActivity : Activity() {
             v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             WindowInsets.CONSUMED
         }
-        root.setOnClickListener { finish() }
+        root.setOnClickListener { dismiss() }
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) { dismiss() }
 
         // any touch on the card means "I'm reading": don't auto-close
-        findViewById<View>(R.id.card).setOnTouchListener { _, _ ->
+        card.setOnTouchListener { _, _ ->
             main.removeCallbacks(autoClose)
             false
         }
@@ -199,12 +236,15 @@ class AssistActivity : Activity() {
         findViewById<Button>(R.id.confirmYes).setOnClickListener { answerConfirm(true) }
         findViewById<Button>(R.id.confirmNo).setOnClickListener { answerConfirm(false) }
 
+        playEnter()
         startListening()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (dismissing) return
         // invoked again while open: start over
+        silencer.engage()
         agent?.cancel()
         agent = null
         answerConfirm(false)
@@ -226,6 +266,9 @@ class AssistActivity : Activity() {
 
     override fun onDestroy() {
         destroyed = true
+        silencer.release()
+        statusPulse?.cancel()
+        scrimAnimator?.cancel()
         main.removeCallbacksAndMessages(null)
         capture.stop()
         asr.cancel()
@@ -263,7 +306,6 @@ class AssistActivity : Activity() {
         phase = Phase.Listening
         status.text = if (followUp) "请说…（不说话会自动关闭）" else "正在听…"
         mic.setImageResource(R.drawable.ic_stop)
-        level.visibility = View.VISIBLE
         asr.start(model, partial = true, silenceMs = prefs.silenceMs, keepLoaded = prefs.keepModelLoaded)
         if (!capture.start(this)) {
             stopListening(cancel = true)
@@ -297,7 +339,6 @@ class AssistActivity : Activity() {
         main.removeCallbacks(maxListenTimeout)
         capture.stop()
         if (cancel) asr.cancel()
-        level.visibility = View.INVISIBLE
         mic.setImageResource(R.drawable.ic_mic)
         if (phase == Phase.Listening) phase = Phase.Idle
     }
@@ -393,7 +434,7 @@ class AssistActivity : Activity() {
         }
     }
 
-    private val autoClose = Runnable { if (phase == Phase.Done) finish() }
+    private val autoClose = Runnable { if (phase == Phase.Done) dismiss() }
 
     /** Called from the agent's worker thread */
     private val uiHost = object : Agent.UiHost {
@@ -455,7 +496,9 @@ class AssistActivity : Activity() {
     private fun showUserText(text: String, partial: Boolean) {
         userText.visibility = View.VISIBLE
         userText.text = text
-        userText.alpha = if (partial) 0.6f else 1f
+        // dimmed through the colour, not the view alpha: the appear animation owns the alpha
+        val c = getColor(R.color.text_secondary)
+        userText.setTextColor(if (partial) (c and 0x00FFFFFF) or (0x99 shl 24) else c)
     }
 
     private fun setIdle(message: String) {
@@ -472,6 +515,143 @@ class AssistActivity : Activity() {
         answer.text = message
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // motion: transform / alpha only (GPU, no relayout per frame), all short
+
+    /** card slides up from below the screen edge, scrim fades in, mic pops */
+    private fun playEnter() {
+        scrim.alpha = 0
+        card.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                card.viewTreeObserver.removeOnPreDrawListener(this)
+                card.translationY = offscreenDistance()
+                card.animate()
+                    .translationY(0f)
+                    .setDuration(ENTER_MS)
+                    .setInterpolator(EMPHASIZED_DECELERATE)
+                    .withLayer()
+                    .withEndAction { if (!dismissing) enableLayoutAnimations() }
+                    .start()
+                animateScrim(255, ENTER_MS * 3 / 4)
+                mic.scaleX = 0.6f
+                mic.scaleY = 0.6f
+                mic.animate()
+                    .scaleX(1f).scaleY(1f)
+                    .setStartDelay(ENTER_MS / 3)
+                    .setDuration(360)
+                    .setInterpolator(OvershootInterpolator(2.2f))
+                    .start()
+                return true
+            }
+        })
+    }
+
+    /**
+     * Closes the sheet with the reverse motion. Leaving for another app (a launch, screen off)
+     * still finishes right away: the sheet isn't visible then anyway.
+     */
+    private fun dismiss() {
+        if (dismissing || isFinishing) return
+        dismissing = true
+        main.removeCallbacks(autoClose)
+        if (phase == Phase.Listening) stopListening(cancel = true)
+        agent?.cancel()
+        answerConfirm(false)
+        // playback comes back while the sheet slides away
+        silencer.release()
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(input.windowToken, 0)
+        card.layoutTransition = null
+        card.animate().cancel()
+        card.animate()
+            .translationY(offscreenDistance())
+            .setDuration(EXIT_MS)
+            .setInterpolator(EMPHASIZED_ACCELERATE)
+            .withLayer()
+            .withEndAction { finish() }
+            .start()
+        animateScrim(0, EXIT_MS)
+    }
+
+    private fun offscreenDistance(): Float =
+        (card.height + (card.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin + root.paddingBottom).toFloat()
+
+    private fun animateScrim(to: Int, duration: Long) {
+        scrimAnimator?.cancel()
+        scrimAnimator = ValueAnimator.ofInt(scrim.alpha, to).apply {
+            this.duration = duration
+            addUpdateListener { scrim.alpha = it.animatedValue as Int }
+            start()
+        }
+    }
+
+    /**
+     * The card grows and shrinks smoothly as lines appear, text streams in or the keyboard
+     * opens, instead of jumping. Turned on after the entry animation, so the first layout
+     * doesn't animate from nothing.
+     */
+    private fun enableLayoutAnimations() {
+        card.layoutTransition = LayoutTransition().apply {
+            enableTransitionType(LayoutTransition.CHANGING)
+            setDuration(LAYOUT_MS)
+            setDuration(LayoutTransition.DISAPPEARING, LAYOUT_MS / 2)
+            setStartDelay(LayoutTransition.APPEARING, LAYOUT_MS / 3)
+            setStartDelay(LayoutTransition.CHANGE_DISAPPEARING, LAYOUT_MS / 4)
+            setStartDelay(LayoutTransition.CHANGE_APPEARING, 0)
+            setStartDelay(LayoutTransition.CHANGING, 0)
+            for (type in intArrayOf(LayoutTransition.CHANGING, LayoutTransition.CHANGE_APPEARING, LayoutTransition.CHANGE_DISAPPEARING)) {
+                setInterpolator(type, EMPHASIZED_DECELERATE)
+            }
+        }
+    }
+
+    private fun onPhaseChanged(p: Phase) {
+        if (p == Phase.Listening) showHalo() else hideHalo()
+        if (p == Phase.Thinking) startPulse() else stopPulse()
+    }
+
+    private fun showHalo() {
+        halo.animate().cancel()
+        halo.visibility = View.VISIBLE
+        halo.alpha = 0f
+        halo.scaleX = 0.8f
+        halo.scaleY = 0.8f
+        halo.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    private fun hideHalo() {
+        if (halo.visibility != View.VISIBLE) return
+        halo.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(180)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction { halo.visibility = View.INVISIBLE }
+            .start()
+    }
+
+    /** each 100 ms audio chunk: the halo eases towards the new level, never jumps */
+    private fun onLevel(rms: Float) {
+        if (phase != Phase.Listening || destroyed) return
+        val s = 1f + HALO_GROWTH * (rms * 12f).coerceIn(0f, 1f)
+        halo.animate().alpha(1f).scaleX(s).scaleY(s).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    private fun startPulse() {
+        if (statusPulse != null) return
+        status.animate().cancel()
+        statusPulse = ObjectAnimator.ofFloat(status, View.ALPHA, 1f, 0.35f).apply {
+            duration = 700
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun stopPulse() {
+        val pulse = statusPulse ?: return
+        statusPulse = null
+        pulse.cancel()
+        status.animate().alpha(1f).setDuration(150).start()
+    }
+
     companion object {
         /** for other apps (QuickBall etc.): `am start -a com.capsopasme.assistant.START` */
         const val ACTION_START = "com.capsopasme.assistant.START"
@@ -484,6 +664,16 @@ class AssistActivity : Activity() {
         private const val AUTO_CLOSE_BASE_MS = 2_500L
         private const val AUTO_CLOSE_PER_CHAR_MS = 120L
         private const val AUTO_CLOSE_MAX_MS = 10_000L
+
+        private const val ENTER_MS = 420L
+        private const val EXIT_MS = 220L
+        private const val LAYOUT_MS = 220L
+        /** halo scale at full voice level: 40dp mic -> 60dp, fits the row's 10dp padding */
+        private const val HALO_GROWTH = 0.5f
+
+        /** Material 3 emphasized easing */
+        private val EMPHASIZED_DECELERATE = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
+        private val EMPHASIZED_ACCELERATE = PathInterpolator(0.3f, 0f, 0.8f, 0.15f)
 
         private val TOOL_LABELS = mapOf(
             "set_alarm" to "设闹钟",

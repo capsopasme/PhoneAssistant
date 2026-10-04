@@ -49,6 +49,7 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MediaSilencer.restoreLeftover(this)
         setContentView(R.layout.activity_settings)
         prefs = Prefs(this)
 

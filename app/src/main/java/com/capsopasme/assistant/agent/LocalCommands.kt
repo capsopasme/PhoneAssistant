@@ -5,12 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 
 /**
- * Commands simple enough to run without the language model: "打开 xx", "倒计时 xx" and the
- * developer switches ("打开开发者选项", "关闭 USB 调试", "开启无线调试").
+ * Commands simple enough to run without the language model: "打开 xx", "倒计时 xx" and some
+ * system switches (developer options / USB / wireless debugging, bluetooth, airplane mode,
+ * dark mode, extra dim, night light: "关掉蓝牙", "切换到深色模式", "护眼模式打开").
  * Parsed and executed on the phone (no network, no API key), in well under a second.
  *
- * Anything this isn't sure about returns null and goes to the model as usual: settings switches
- * ("打开蓝牙"), compound commands ("打开微信然后…"), in-app actions ("打开微信扫一扫"),
+ * Anything this isn't sure about returns null and goes to the model as usual: other switches
+ * ("打开WiFi"), compound commands ("打开微信然后…"), in-app actions ("打开微信扫一扫"),
  * names that match no app or several apps equally well, durations it can't read.
  */
 object LocalCommands {
@@ -19,10 +20,13 @@ object LocalCommands {
     class OpenApp(val label: String, val intent: Intent) : Command
     class Timer(val seconds: Int) : Command
 
-    /** [setting] is a toggle_setting value: developer_options / usb_debugging / wireless_debugging */
+    /**
+     * [setting] is a toggle_setting value: developer_options / usb_debugging / wireless_debugging /
+     * bluetooth / airplane_mode / dark_mode / extra_dim / night_light
+     */
     class Switch(val setting: String, val on: Boolean) : Command
 
-    private val POLITE_PREFIX = Regex("^(请你|请|帮我|给我|麻烦你|麻烦|帮忙|你|我想|我要|快)+")
+    private val POLITE_PREFIX = Regex("^(请你|请|帮我|给我|麻烦你|麻烦|帮忙|你|我想|我要|快|现在|马上|立刻)+")
     private val POLITE_SUFFIX = Regex("(一下子|一下|吧|啊|呀|哈|呗|好吗|好不好|谢谢)+$")
     private val OPEN_VERB = Regex("^(打开|启动|开启|运行|进入)")
     private val APP_SUFFIX = Regex("(这个应用|这个软件|应用程序|应用|软件|app|程序)$", RegexOption.IGNORE_CASE)
@@ -35,7 +39,7 @@ object LocalCommands {
     private val NOT_APPS = listOf(
         "蓝牙", "wifi", "无线", "网络", "流量", "数据", "热点", "飞行", "勿扰", "免打扰", "定位", "gps", "位置",
         "nfc", "手电", "闪光灯", "旋转", "深色", "暗色", "夜间", "省电", "静音", "震动", "振动", "铃声",
-        "亮度", "音量", "闹钟", "日程", "导航", "去", "地图上",
+        "亮度", "音量", "闹钟", "日程", "导航", "去", "地图上", "极暗", "护眼", "浅色", "主题", "模式",
     )
 
     fun parse(context: Context, text: String): Command? {
@@ -47,7 +51,12 @@ object LocalCommands {
         if (s.isEmpty()) return null
 
         parseTimer(s)?.let { return it }
-        parseDevSwitch(s)?.let { return it }
+        matchSwitch(s)?.let { m ->
+            // matched only by sound ("打开飞信" ~ 飞行): an app with that very name wins
+            if (m.score >= 1.0) return m.switch
+            val app = rankApps(context, m.target).firstOrNull()
+            if (app == null || app.score <= m.score) return m.switch
+        }
 
         val m = OPEN_VERB.find(s) ?: return null
         var name = s.substring(m.range.last + 1).replace(APP_SUFFIX, "")
@@ -67,21 +76,42 @@ object LocalCommands {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // developer switches
+    // system switches
 
-    private val ON_VERB = Regex("^(打开|开启|启用|启动|开)")
-    private val OFF_VERB = Regex("^(关闭|关掉|关上|禁用|停用|取消|关)")
-    private val ON_SUFFIX = Regex("(打开|开启|启用|开起来|开)$")
-    private val OFF_SUFFIX = Regex("(关闭|关掉|关上|禁用|停用|关了|关)$")
+    private val ON_VERB = Regex("^(切换到|切换成|切换为|切到|换成|换到|调成|调到|改成|改为|设为|设置为|设置成|变成|进入|打开|开启|启用|启动|开)")
+    private val OFF_VERB = Regex("^(关闭|关掉|关上|禁用|停用|取消|退出|关)")
+    private val ON_SUFFIX = Regex("(打开|开启|启用|开起来|开开|开)$")
+    private val OFF_SUFFIX = Regex("(关闭|关掉|关上|禁用|停用|关了|退出|关)$")
 
-    private val DEV_TARGETS = listOf(
-        "developer_options" to listOf("开发者模式", "开发者选项", "开发人员选项", "开发者设置", "开发选项", "开发者"),
-        "usb_debugging" to listOf("usb调试", "adb调试", "有线调试", "usb调试模式", "adb"),
-        "wireless_debugging" to listOf("无线调试", "无线adb", "wifi调试", "无线网络调试", "无线adb调试", "无线调试模式"),
+    /** [invert]: names of the opposite state ("打开浅色模式" = dark mode off) */
+    private class Target(val setting: String, val names: List<String>, val invert: Boolean = false)
+
+    private val SWITCH_TARGETS = listOf(
+        Target("developer_options", listOf("开发者模式", "开发者选项", "开发人员选项", "开发者设置", "开发选项", "开发者")),
+        Target("usb_debugging", listOf("usb调试", "adb调试", "有线调试", "usb调试模式", "adb")),
+        Target("wireless_debugging", listOf("无线调试", "无线adb", "wifi调试", "无线网络调试", "无线adb调试", "无线调试模式")),
+        Target("bluetooth", listOf("蓝牙", "蓝牙连接")),
+        Target("airplane_mode", listOf("飞行模式", "飞行", "飞航模式", "航班模式", "飞机模式")),
+        Target("dark_mode", listOf(
+            "深色模式", "深色主题", "深色", "暗色模式", "暗色主题", "暗色", "暗黑模式", "黑暗模式",
+            "黑夜模式", "暗夜模式", "夜间模式", "夜晚模式", "黑色主题", "暗黑主题",
+        )),
+        Target("dark_mode", listOf(
+            "浅色模式", "浅色主题", "浅色", "亮色模式", "亮色主题", "白天模式", "日间模式", "白色主题",
+        ), invert = true),
+        Target("extra_dim", listOf("极暗", "极暗模式", "超暗", "超暗模式", "极暗屏幕", "屏幕极暗", "超级暗", "极度调暗")),
+        Target("night_light", listOf(
+            "护眼模式", "护眼", "夜间灯光", "夜灯", "夜光模式", "夜间护眼", "防蓝光", "防蓝光模式", "蓝光过滤", "护眼屏幕",
+        )),
     )
 
-    /** "打开开发者选项" "关掉USB调试" "把无线调试打开" "无线调试关一下" */
-    fun parseDevSwitch(s: String): Switch? {
+    /** a switch command and how surely it was recognised (1.0 = exact name) */
+    private class SwitchMatch(val switch: Switch, val score: Double, val target: String)
+
+    /** "打开开发者选项" "关掉USB调试" "把蓝牙打开" "护眼模式关一下" "切换到深色模式" "退出飞行模式" */
+    fun parseSwitch(s: String): Switch? = matchSwitch(s)?.switch
+
+    private fun matchSwitch(s: String): SwitchMatch? {
         val t = s.removePrefix("把").removePrefix("将")
         // every reading of the verb ("开发者选项打开": the leading 开 is not the verb), best wins
         val readings = buildList {
@@ -90,20 +120,25 @@ object LocalCommands {
             OFF_SUFFIX.find(t)?.let { add(false to t.substring(0, it.range.first)) }
             ON_SUFFIX.find(t)?.let { add(true to t.substring(0, it.range.first)) }
         }
-        var best: Triple<String, Boolean, Double>? = null
+        var best: SwitchMatch? = null
         for ((on, rest) in readings) {
-            val target = rest.removePrefix("一下").removeSuffix("一下").removeSuffix("功能").removeSuffix("开关")
+            val target = rest.replace(TARGET_LEAD, "").replace(TARGET_TAIL, "")
             if (target.isEmpty() || target.length > 12) continue
-            // text or sound must match a name closely: "usb调式" is fine, "调试" alone is not
-            for ((setting, names) in DEV_TARGETS) {
-                for (n in names) {
-                    val sc = FuzzyMatch.score(target, n)
-                    if (sc >= 0.9 && sc > (best?.third ?: 0.0)) best = Triple(setting, on, sc)
+            // "蓝牙模式" / "护眼" / "护眼模式" all name the same switch
+            val forms = listOf(target, target.removeSuffix("模式")).filter { it.isNotEmpty() }.distinct()
+            // text or sound must match a name closely: "usb调式" "神色模式" are fine, "调试" alone is not
+            for (form in forms) for (tg in SWITCH_TARGETS) for (n in tg.names) {
+                val sc = FuzzyMatch.score(form, n)
+                if (sc >= 0.9 && sc > (best?.score ?: 0.0)) {
+                    best = SwitchMatch(Switch(tg.setting, on != tg.invert), sc, target)
                 }
             }
         }
-        return best?.let { Switch(it.first, it.second) }
+        return best
     }
+
+    private val TARGET_LEAD = Regex("^(一下子|一下|下|一个|个)")
+    private val TARGET_TAIL = Regex("(一下子|一下|给|的|功能|开关)+$")
 
     // ---------------------------------------------------------------------------------------------
     // apps

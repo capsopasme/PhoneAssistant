@@ -5,6 +5,7 @@
     <color name="text_primary">#FFE6E5EB</color>
     <color name="text_secondary">#FFA7A6AE</color>
     <color name="accent">#FF9AABFF</color>
+    <color name="halo">#409AABFF</color>
     <color name="accent_soft">#299AABFF</color>
     <color name="error">#FFFF8A80</color>
     <color name="input_bg">#FF2B2B31</color>

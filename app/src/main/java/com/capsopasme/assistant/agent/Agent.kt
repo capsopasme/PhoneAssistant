@@ -63,7 +63,7 @@ class Agent(
     fun cancel() = llm.cancel()
 
     fun ask(question: String) {
-        // "打开 xx" / "倒计时 xx": done on the phone, no model round trip
+        // "打开 xx" / "倒计时 xx" / "关掉蓝牙": done on the phone, no model round trip
         val local = try {
             LocalCommands.parse(context, question)
         } catch (e: Exception) {
@@ -137,10 +137,7 @@ class Agent(
                 "已打开${command.label}" to true
             }
             is LocalCommands.Timer -> toolResult(tools.execute("set_timer", JSONObject().put("seconds", command.seconds).toString()))
-            is LocalCommands.Switch -> toolResult(tools.execute(
-                "toggle_setting",
-                JSONObject().put("setting", command.setting).put("enabled", command.on).toString()
-            ))
+            is LocalCommands.Switch -> toolResult(tools.toggleLocal(command.setting, command.on))
         }
         // keep it in the conversation, so a follow-up question has the context
         messages.put(JSONObject().put("role", "user").put("content", question))

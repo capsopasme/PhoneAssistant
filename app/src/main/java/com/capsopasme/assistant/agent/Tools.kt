@@ -627,8 +627,22 @@ class Tools(private val ctx: Context, private val host: Host) {
     private fun toggleSetting(a: JSONObject): String {
         val setting = a.optString("setting")
         if (!a.has("enabled")) return err("缺少 enabled")
-        val on = a.optBoolean("enabled")
+        return toggle(setting, a.optBoolean("enabled"), confirmRisky = true)
+    }
+
+    /**
+     * A switch the user asked for in so many words, parsed on the phone ([LocalCommands]):
+     * no "this cuts the network" question, nothing after it needs the network.
+     */
+    fun toggleLocal(setting: String, on: Boolean): String = try {
+        toggle(setting, on, confirmRisky = false)
+    } catch (e: Exception) {
+        err(e.message ?: e.javaClass.simpleName)
+    }
+
+    private fun toggle(setting: String, on: Boolean, confirmRisky: Boolean): String {
         val en = if (on) "enable" else "disable"
+        val bit = if (on) 1 else 0
         val (command, label) = when (setting) {
             "wifi" -> "svc wifi $en" to "WiFi"
             "bluetooth" -> "svc bluetooth $en || cmd bluetooth_manager $en" to "蓝牙"
@@ -637,9 +651,12 @@ class Tools(private val ctx: Context, private val host: Host) {
             "dnd" -> "cmd notification set_dnd ${if (on) "on" else "off"}" to "勿扰模式"
             "location" -> "cmd location set-location-enabled $on" to "定位"
             "nfc" -> "svc nfc $en" to "NFC"
-            "auto_rotate" -> "settings put system accelerometer_rotation ${if (on) 1 else 0}" to "自动旋转"
+            "auto_rotate" -> "settings put system accelerometer_rotation $bit" to "自动旋转"
             "dark_mode" -> "cmd uimode night ${if (on) "yes" else "no"}" to "深色模式"
-            "battery_saver" -> "cmd power set-mode ${if (on) 1 else 0} || settings put global low_power ${if (on) 1 else 0}" to "省电模式"
+            // ColorDisplayService watches these two settings, same as the Quick Settings tiles
+            "night_light" -> "settings put secure night_display_activated $bit" to "护眼模式"
+            "extra_dim" -> "settings put secure reduce_bright_colors_activated $bit" to "极暗模式"
+            "battery_saver" -> "cmd power set-mode $bit || settings put global low_power $bit" to "省电模式"
             // debugging lives under developer options: switching it on shows them too,
             // switching developer options off turns both kinds of debugging off as well
             "developer_options" -> (if (on) "settings put global development_settings_enabled 1"
@@ -652,10 +669,32 @@ class Tools(private val ctx: Context, private val host: Host) {
             else -> return err("不支持的开关：$setting")
         }
         val risky = (setting == "airplane_mode" && on) || (setting == "mobile_data" && !on) || (setting == "wifi" && !on)
-        if (risky && !host.confirm("${if (on) "打开" else "关闭"}$label？会断开网络，之后的回复可能失败")) {
+        if (confirmRisky && risky && !host.confirm("${if (on) "打开" else "关闭"}$label？会断开网络，之后的回复可能失败")) {
             return err("用户取消了")
         }
-        return rootAction(command, "$label 已${if (on) "打开" else "关闭"}")
+        val done = "$label 已${if (on) "打开" else "关闭"}"
+        val query = stateQuery(setting) ?: return rootAction(command, done)
+        // one su call: read the current state, switch only if it differs
+        val r = RootShell.run(
+            "s=\$($query 2>/dev/null); case \"\$s\" in *yes*|1|2) c=1;; *no*|0) c=0;; *) c=x;; esac; " +
+                    "if [ \"\$c\" = $bit ]; then echo $ALREADY; else $command; fi"
+        )
+        return when {
+            r.ok && r.output.contains(ALREADY) -> ok("$label 本来就是${if (on) "开" else "关"}着的")
+            r.ok -> ok(done)
+            else -> err("执行失败（${r.code}）：${r.output.take(200).ifEmpty { "可能没有授予 root" }}")
+        }
+    }
+
+    /** shell command printing a switch's current state (1/0, or "Night mode: yes/no") */
+    private fun stateQuery(setting: String): String? = when (setting) {
+        // 2 = on while in airplane mode
+        "bluetooth" -> "settings get global bluetooth_on"
+        "airplane_mode" -> "settings get global airplane_mode_on"
+        "dark_mode" -> "cmd uimode night"
+        "night_light" -> "settings get secure night_display_activated"
+        "extra_dim" -> "settings get secure reduce_bright_colors_activated"
+        else -> null
     }
 
     /**
@@ -712,6 +751,7 @@ class Tools(private val ctx: Context, private val host: Host) {
     companion object {
         private const val GRAMOPHONE = "org.akanework.gramophone"
         private const val MUSIC_MIN_SCORE = 0.6
+        private const val ALREADY = "__ALREADY__"
 
         /** Tool schemas, OpenAI function-calling format */
         val schemas: JSONArray by lazy {
@@ -766,10 +806,10 @@ class Tools(private val ctx: Context, private val host: Host) {
                 fn("flashlight", "开关手电筒", props("on" to bool("true 打开，false 关闭")), "on")
                 fn("set_brightness", "调节屏幕亮度：percent 为系统亮度条上的百分比，或 auto=true 开启自动亮度",
                     props("percent" to int("亮度百分比 0-100"), "auto" to bool("开启自动亮度")))
-                fn("toggle_setting", "打开或关闭系统开关",
+                fn("toggle_setting", "打开或关闭系统开关（night_light=护眼模式/夜间灯光，extra_dim=极暗模式，dark_mode=深色主题）",
                     props(
                         "setting" to enumOf("开关", "wifi", "bluetooth", "mobile_data", "airplane_mode", "dnd",
-                            "location", "nfc", "auto_rotate", "dark_mode", "battery_saver",
+                            "location", "nfc", "auto_rotate", "dark_mode", "night_light", "extra_dim", "battery_saver",
                             "developer_options", "usb_debugging", "wireless_debugging"),
                         "enabled" to bool("true 打开，false 关闭"),
                     ), "setting", "enabled")

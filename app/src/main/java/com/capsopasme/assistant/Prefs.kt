@@ -69,6 +69,13 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("keep_model_loaded", true)
         set(v) = sp.edit().putBoolean("keep_model_loaded", v).apply()
 
+    /** the media stream is muted by an open assistant sheet ([com.capsopasme.assistant.ui.MediaSilencer]) */
+    var musicMutedByAssistant: Boolean
+        get() = sp.getBoolean("music_muted_by_assistant", false)
+        set(v) {
+            sp.edit().putBoolean("music_muted_by_assistant", v).apply()
+        }
+
     var mirrorPrefix: String
         get() = sp.getString("mirror_prefix", "") ?: ""
         set(v) = sp.edit().putString("mirror_prefix", v.trim()).apply()
