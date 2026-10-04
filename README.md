@@ -38,7 +38,7 @@ root 命令全部由代码按固定模板拼出，模型只能选开关名和开
 
 原生库不在仓库里，CI 会从源码编 sherpa-onnx（QNN），跟小企鹅输入法 fork 用的是同一个脚本和版本（sherpa-onnx v1.13.8 + QNN 2.40）。
 
-**GitHub Actions**：推到 `main` 或手动运行 “Build APK”，产物在 Actions 页面下载。仓库 Secrets 里配 `SIGN_KEY_BASE64` / `SIGN_KEY_ALIAS` / `SIGN_KEY_PWD`（可以直接复用 fcitx5-android 那套），否则每次用临时 debug 签名，后一个包装不上前一个。
+**GitHub Actions**：推到 `main` 或手动运行 “Build APK”，产物在 Actions 页面下载。`app/build.gradle.kts` 里的 `versionName` 还没有对应的 Release 时（比如改成 0.3.0），`main` 的构建会自动发布 Release `v0.3.0` 并附上 APK，说明取自 `.github/release-notes/v0.3.0.md`。仓库 Secrets 里配 `SIGN_KEY_BASE64` / `SIGN_KEY_ALIAS` / `SIGN_KEY_PWD`（可以直接复用 fcitx5-android 那套），否则每次用临时 debug 签名，后一个包装不上前一个。
 
 **本地**：
 
