@@ -17,6 +17,7 @@ import android.os.StatFs
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.ContactsContract
+import android.provider.MediaStore
 import android.view.KeyEvent
 import com.capsopasme.assistant.Prefs
 import org.json.JSONArray
@@ -73,6 +74,7 @@ class Tools(private val ctx: Context, private val host: Host) {
                 "open_app" -> openApp(a)
                 "web_search" -> webSearch(a)
                 "get_weather" -> getWeather(a)
+                "play_music" -> playMusic(a)
                 "media_control" -> mediaControl(a)
                 "set_volume" -> setVolume(a)
                 "set_ringer_mode" -> setRingerMode(a)
@@ -121,7 +123,19 @@ class Tools(private val ctx: Context, private val host: Host) {
             .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
         a.optString("label").takeIf { it.isNotBlank() }?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
-        return startNow(intent, "已开始 ${seconds} 秒倒计时")
+        return startNow(intent, "已开始${formatDuration(seconds)}倒计时")
+    }
+
+    private fun formatDuration(seconds: Int): String {
+        val h = seconds / 3600
+        val m = seconds % 3600 / 60
+        val sec = seconds % 60
+        return buildString {
+            if (h > 0) append(" $h 小时")
+            if (m > 0) append(" $m 分钟")
+            if (sec > 0 || isEmpty()) append(" $sec 秒")
+            append(' ')
+        }
     }
 
     private fun addCalendarEvent(a: JSONObject): String {
@@ -257,34 +271,17 @@ class Tools(private val ctx: Context, private val host: Host) {
     }
 
     private fun openApp(a: JSONObject): String {
-        val query = norm(a.optString("name")).ifEmpty { return err("缺少应用名") }
-        val pm = ctx.packageManager
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val scored = pm.queryIntentActivities(launcher, 0).mapNotNull { ri ->
-            val label = ri.loadLabel(pm).toString()
-            val l = norm(label)
-            val score = when {
-                l == query -> 3
-                l.contains(query) -> 2
-                l.length >= 2 && query.contains(l) -> 1
-                ri.activityInfo.packageName.lowercase().contains(query) -> 1
-                else -> 0
-            }
-            if (score > 0) Triple(score, label, ri) else null
+        val name = a.optString("name").trim().ifEmpty { return err("缺少应用名") }
+        val ranked = LocalCommands.rankApps(ctx, name)
+        val best = ranked.firstOrNull()?.takeIf { it.score >= 0.6 }
+            ?: return err("没有找到名为“$name”的应用")
+        val close = ranked.filter { it.score >= 0.6 && it.score >= best.score - 0.05 }
+        if (close.size > 1) {
+            return err("找到多个相近的应用，请让用户选择：" + close.take(5).joinToString("、") { it.label })
         }
-        if (scored.isEmpty()) return err("没有找到名为“${a.optString("name")}”的应用")
-        val best = scored.maxOf { it.first }
-        val top = scored.filter { it.first == best }.distinctBy { it.third.activityInfo.packageName }
-        if (top.size > 1) return err("找到多个应用，请让用户选择：" + top.joinToString("、") { it.second })
-        val info = top[0].third.activityInfo
-        val intent = Intent(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            .setClassName(info.packageName, info.name)
-            .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        return launchOrError(intent, "打开 ${top[0].second}")
+        return launchOrError(LocalCommands.launchIntent(best), best.label)
     }
 
-    private fun norm(s: String) = s.lowercase().filterNot { it.isWhitespace() }
 
     private fun webSearch(a: JSONObject): String {
         val q = a.optString("query").ifBlank { return err("缺少搜索词") }
@@ -375,6 +372,124 @@ class Tools(private val ctx: Context, private val host: Host) {
         } finally {
             conn.disconnect()
         }
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // music: Gramophone (留声机), https://github.com/AkaneTan/Gramophone
+
+    private class Song(val id: Long, val title: String, val artist: String, val album: String)
+
+    private fun loadSongs(): List<Song>? {
+        if (ctx.checkSelfPermission(Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return null
+        }
+        val out = ArrayList<Song>()
+        ctx.contentResolver.query(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+            ),
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0",
+            null,
+            null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val artist = c.getString(2)?.takeIf { it != MediaStore.UNKNOWN_STRING } ?: ""
+                out.add(Song(c.getLong(0), c.getString(1) ?: "", artist, c.getString(3) ?: ""))
+            }
+        }
+        return out
+    }
+
+    /** best of [values] for the spoken [query], with its score */
+    private fun bestOf(query: String, values: Collection<String>): Pair<String, Double>? =
+        values.filter { it.isNotBlank() }.distinct()
+            .map { it to FuzzyMatch.score(query, it) }
+            .maxByOrNull { it.second }
+            ?.takeIf { it.second >= MUSIC_MIN_SCORE }
+
+    private fun playMusic(a: JSONObject): String {
+        if (!isInstalled(GRAMOPHONE)) return err("没有安装留声机（Gramophone）")
+        val title = a.optString("title").trim()
+        val artist = a.optString("artist").trim()
+        val album = a.optString("album").trim()
+        val shuffle = a.optBoolean("shuffle", false)
+
+        if (title.isEmpty() && artist.isEmpty() && album.isEmpty()) {
+            return launchOrError(shuffleIntent(""), "留声机，随机播放全部歌曲")
+        }
+
+        val songs = loadSongs()
+        if (songs == null) {
+            // no access to the library: let Gramophone search the words as they are
+            val q = title.ifEmpty { album.ifEmpty { artist } }
+            val intent = if (shuffle) shuffleIntent(q) else searchIntent(q, null)
+            return launchOrError(intent, "留声机，播放“$q”（未授予音乐权限，按原文搜索）")
+        }
+        if (songs.isEmpty()) return err("手机里没有找到音乐文件")
+
+        // a specific song: the best title, nudged by the artist when one was said
+        if (title.isNotEmpty() && !shuffle) {
+            val best = songs.mapNotNull { s ->
+                val t = FuzzyMatch.score(title, s.title)
+                if (t < MUSIC_MIN_SCORE) return@mapNotNull null
+                val r = if (artist.isEmpty()) 0.0 else FuzzyMatch.score(artist, s.artist)
+                s to (t + 0.2 * r)
+            }.maxByOrNull { it.second }?.first
+                ?: return err("曲库里没有找到歌曲“$title”" + if (artist.isNotEmpty()) "（$artist）" else "")
+            val desc = best.title + if (best.artist.isNotEmpty()) " - ${best.artist}" else ""
+            return launchOrError(songIntent(best), "留声机，播放《$desc》")
+        }
+
+        // a group of songs: album, artist, or a title used as a shuffle filter
+        val (kind, value) = when {
+            album.isNotEmpty() -> "album" to (bestOf(album, songs.map { it.album })?.first
+                ?: return err("曲库里没有找到专辑“$album”"))
+            artist.isNotEmpty() -> "artist" to (bestOf(artist, songs.map { it.artist })?.first
+                ?: return err("曲库里没有找到歌手“$artist”"))
+            else -> "title" to (bestOf(title, songs.map { it.title })?.first
+                ?: return err("曲库里没有找到“$title”"))
+        }
+        val what = when (kind) {
+            "album" -> "专辑《$value》"
+            "artist" -> "$value 的歌"
+            else -> "《$value》"
+        }
+        val intent = if (shuffle) shuffleIntent(value) else searchIntent(value, kind)
+        return launchOrError(intent, "留声机，${if (shuffle) "随机" else ""}播放$what")
+    }
+
+    /** shuffle every song whose title / artist / album contains [filter] ("" = all songs) */
+    private fun shuffleIntent(filter: String) = Intent("org.akanework.gramophone.action.SHUFFLE")
+        .setPackage(GRAMOPHONE)
+        .putExtra("item_name", filter)
+
+    /** play exactly this song (Gramophone looks the MediaStore id up in its library) */
+    private fun songIntent(song: Song): Intent {
+        val direct = Intent(Intent.ACTION_MAIN)
+            .setClassName(GRAMOPHONE, "org.akanework.gramophone.ui.MainActivity")
+            .putExtra("AutoStartId", song.id.toString())
+        return if (direct.resolveActivity(ctx.packageManager) != null) direct
+        else searchIntent(song.title, "title")
+    }
+
+    /** standard "play from search"; Gramophone plays every song containing [value] */
+    private fun searchIntent(value: String, kind: String?): Intent {
+        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .setPackage(GRAMOPHONE)
+            .putExtra(SearchManager.QUERY, value)
+        when (kind) {
+            "title" -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Media.ENTRY_CONTENT_TYPE)
+                .putExtra(MediaStore.EXTRA_MEDIA_TITLE, value)
+            "artist" -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Artists.ENTRY_CONTENT_TYPE)
+                .putExtra(MediaStore.EXTRA_MEDIA_ARTIST, value)
+            "album" -> i.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Albums.ENTRY_CONTENT_TYPE)
+                .putExtra(MediaStore.EXTRA_MEDIA_ALBUM, value)
+        }
+        return i
     }
 
     private fun mediaControl(a: JSONObject): String {
@@ -556,6 +671,9 @@ class Tools(private val ctx: Context, private val host: Host) {
     }
 
     companion object {
+        private const val GRAMOPHONE = "org.akanework.gramophone"
+        private const val MUSIC_MIN_SCORE = 0.6
+
         /** Tool schemas, OpenAI function-calling format */
         val schemas: JSONArray by lazy {
             JSONArray().apply {
@@ -588,7 +706,15 @@ class Tools(private val ctx: Context, private val host: Host) {
                 fn("web_search", "在浏览器里搜索（用户明确要搜索、或需要最新网络信息时用）", props("query" to str("搜索词")), "query")
                 fn("get_weather", "查天气（实时和未来几天）",
                     props("city" to str("城市名，可选，不填用默认城市"), "days" to int("预报天数 1-7，默认 1")))
-                fn("media_control", "控制正在播放的音乐/视频",
+                fn("play_music", "用留声机播放手机里的本地音乐。说了歌名就放那首歌；只说歌手或专辑就放该歌手/专辑的歌；" +
+                        "什么都没指定（如“放点音乐”“随便来首歌”）就不填参数，随机播放全部歌曲。“继续播放/暂停”用 media_control。",
+                    props(
+                        "title" to str("歌名，可选"),
+                        "artist" to str("歌手，可选"),
+                        "album" to str("专辑，可选"),
+                        "shuffle" to bool("随机播放（用户说“随机放某歌手的歌”时为 true），默认 false"),
+                    ))
+                fn("media_control", "控制正在播放的音乐/视频（继续、暂停、上一首、下一首）",
                     props("action" to enumOf("动作", "play_pause", "play", "pause", "next", "previous")), "action")
                 fn("set_volume", "调节音量：给 percent 设到具体百分比，或用 adjust 相对调节",
                     props(

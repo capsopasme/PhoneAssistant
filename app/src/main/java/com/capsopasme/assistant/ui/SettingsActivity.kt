@@ -208,6 +208,7 @@ class SettingsActivity : Activity() {
             mark(Manifest.permission.RECORD_AUDIO, "麦克风"),
             mark(Manifest.permission.READ_CONTACTS, "通讯录"),
             mark(Manifest.permission.CALL_PHONE, "电话"),
+            mark(Manifest.permission.READ_MEDIA_AUDIO, "音乐"),
         ).joinToString("   ")
     }
 
@@ -288,6 +289,7 @@ class SettingsActivity : Activity() {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_MEDIA_AUDIO,
         )
     }
 }

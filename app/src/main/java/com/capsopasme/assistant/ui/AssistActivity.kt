@@ -55,6 +55,12 @@ class AssistActivity : Activity() {
     private var phase = Phase.Idle
     private var heardSomething = false
 
+    /**
+     * listening again after an answer that didn't do anything (a question back, a failed
+     * tool): silence then just closes the sheet instead of showing "没听到声音"
+     */
+    private var followUp = false
+
     /** one worker thread for the agent, created lazily, killed in onDestroy */
     private var worker: ExecutorService? = null
     private var agent: Agent? = null
@@ -102,7 +108,7 @@ class AssistActivity : Activity() {
             stopListening(cancel = false)
             val t = text.trim()
             if (t.isEmpty()) {
-                setIdle("没听清，再说一次？")
+                if (followUp) endFollowUp() else setIdle("没听清，再说一次？")
             } else {
                 showUserText(t, partial = false)
                 ask(t)
@@ -113,7 +119,10 @@ class AssistActivity : Activity() {
             // DONE right after FINAL is the normal end; alone it means nothing was said
             if (phase == Phase.Listening) {
                 stopListening(cancel = false)
-                setIdle(if (heardSomething) "没听清，再说一次？" else "没听到声音")
+                when {
+                    followUp && !heardSomething -> endFollowUp()
+                    else -> setIdle(if (heardSomething) "没听清，再说一次？" else "没听到声音")
+                }
             }
         }
 
@@ -230,31 +239,48 @@ class AssistActivity : Activity() {
     // ---------------------------------------------------------------------------------------------
     // listening
 
-    private fun startListening() {
-        if (phase == Phase.Thinking || phase == Phase.Confirming || phase == Phase.Listening) return
+    /** @return false if listening couldn't start (no permission / model / microphone) */
+    private fun startListening(followUp: Boolean = false): Boolean {
+        if (phase == Phase.Thinking || phase == Phase.Confirming || phase == Phase.Listening) return false
+        this.followUp = followUp
+        val model = prefs.speechModel
+        if (followUp) {
+            // no prompts in the middle of a conversation: just don't listen
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+                !ModelManager.isInstalled(this, model)
+            ) return false
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
             setIdle("需要麦克风权限")
-            return
+            return false
         }
-        val model = prefs.speechModel
         if (!ModelManager.isInstalled(this, model)) {
             setIdle("语音模型还没装：打开“语音助手”设置下载或从小企鹅输入法复制。现在可以先打字。")
-            return
+            return false
         }
         heardSomething = false
         phase = Phase.Listening
-        status.text = "正在听…"
+        status.text = if (followUp) "请说…（不说话会自动关闭）" else "正在听…"
         mic.setImageResource(R.drawable.ic_stop)
         level.visibility = View.VISIBLE
         asr.start(model, partial = true, silenceMs = prefs.silenceMs, keepLoaded = prefs.keepModelLoaded)
         if (!capture.start(this)) {
             stopListening(cancel = true)
             showError("无法打开麦克风")
-            return
+            return false
         }
-        main.postDelayed(noSpeechTimeout, NO_SPEECH_MS)
+        main.postDelayed(noSpeechTimeout, if (followUp) FOLLOW_UP_NO_SPEECH_MS else NO_SPEECH_MS)
         main.postDelayed(maxListenTimeout, MAX_LISTEN_MS)
+        return true
+    }
+
+    /** nobody answered the follow-up: back to the answer, then close like a normal answer */
+    private fun endFollowUp() {
+        followUp = false
+        phase = Phase.Done
+        status.text = ""
+        main.postDelayed(autoClose, AUTO_CLOSE_BASE_MS)
     }
 
     /** nobody spoke: let the recognizer finish with whatever it has */
@@ -331,7 +357,7 @@ class AssistActivity : Activity() {
                 status.text = TOOL_LABELS[name]?.let { "正在$it…" } ?: "正在执行…"
             }
 
-            override fun onFinished(text: String, launches: List<Intent>) = live {
+            override fun onFinished(text: String, launches: List<Intent>, acted: Boolean) = live {
                 mic.isEnabled = true
                 if (launches.isNotEmpty()) {
                     for (intent in launches) {
@@ -348,6 +374,8 @@ class AssistActivity : Activity() {
                 status.text = ""
                 if (answer.text.isNullOrEmpty()) answer.text = text.ifBlank { "好的" }
                 answer.visibility = View.VISIBLE
+                // nothing got done (a question back, a failed tool): listen for the reply
+                if (!acted && startListening(followUp = true)) return@live
                 // short confirmations close by themselves; longer answers stay a bit for reading
                 val delay = (AUTO_CLOSE_BASE_MS + answer.text.length * AUTO_CLOSE_PER_CHAR_MS)
                     .coerceAtMost(AUTO_CLOSE_MAX_MS)
@@ -450,6 +478,7 @@ class AssistActivity : Activity() {
 
         private const val REQ_MIC = 1
         private const val NO_SPEECH_MS = 7_000L
+        private const val FOLLOW_UP_NO_SPEECH_MS = 8_000L
         private const val MAX_LISTEN_MS = 25_000L
         private const val CONFIRM_TIMEOUT_S = 30L
         private const val AUTO_CLOSE_BASE_MS = 2_500L
@@ -468,6 +497,7 @@ class AssistActivity : Activity() {
             "open_app" to "打开应用",
             "web_search" to "搜索",
             "get_weather" to "查天气",
+            "play_music" to "播放音乐",
             "media_control" to "控制播放",
             "set_volume" to "调音量",
             "set_ringer_mode" to "切换铃声",

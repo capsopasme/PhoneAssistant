@@ -71,8 +71,13 @@ class LlmClient {
             when (provider.kind) {
                 // non-thinking mode: these are short, latency-sensitive commands
                 Kind.DeepSeek -> put("thinking", JSONObject().put("type", "disabled"))
-                // GLM-4.x / 5.0-5.2 think by default but can turn it off; 5.3 always thinks
-                Kind.Glm -> if (!provider.model.lowercase().startsWith("glm-5.3")) {
+                // GLM-4.x / 5.0-5.2 think by default but can turn it off. GLM-5.3 / 5.3-flash /
+                // 5.3-flashx can't, and default to reasoning_effort "max": ask for the lowest
+                // level they accept ("max" / "high" / "low")
+                Kind.Glm -> if (provider.model.lowercase().startsWith("glm-5.3")) {
+                    put("thinking", JSONObject().put("type", "enabled"))
+                    put("reasoning_effort", "low")
+                } else {
                     put("thinking", JSONObject().put("type", "disabled"))
                 }
                 // Gemini 3 can't turn reasoning off, keep it minimal
