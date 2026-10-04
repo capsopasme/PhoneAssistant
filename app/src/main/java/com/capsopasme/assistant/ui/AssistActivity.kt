@@ -54,7 +54,7 @@ class AssistActivity : Activity() {
 
     private lateinit var prefs: Prefs
     private lateinit var root: View
-    private lateinit var card: View
+    private lateinit var card: ViewGroup
     private lateinit var scrim: Drawable
     private lateinit var status: TextView
     private lateinit var halo: View
