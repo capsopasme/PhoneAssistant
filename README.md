@@ -1,11 +1,11 @@
 # 语音助手（PhoneAssistant）
 
-给一加 Ace 5（SM8650 / LineageOS / Android 16 / KernelSU）用的语音助手：离线语音识别 + DeepSeek（Gemini 备用）tool calling，完成闹钟、电话、导航、系统开关这类常见操作。
+给一加 Ace 5（SM8650 / LineageOS / Android 16 / KernelSU）用的语音助手：离线语音识别 + 大模型 tool calling（DeepSeek / 智谱 GLM / Gemini 三选一），完成闹钟、电话、导航、系统开关这类常见操作。
 
 ## 用法
 
 1. 打开“语音助手”（桌面图标进入设置）：
-   - 填 DeepSeek API Key（Gemini Key 可选，DeepSeek 请求失败时自动切过去）。
+   - 在“大模型”里选一个（DeepSeek / 智谱 GLM / Gemini），填它的 API Key。只用选中的那一个，请求失败就直接报错，不会自动换别的模型。智谱默认 `glm-4.7-flash`（免费，Key 在 open.bigmodel.cn 申请）。
    - 语音模型：小企鹅输入法里已经装了同款 SenseVoice 模型的话，点“从小企鹅复制”（需要 root），否则“下载”。装好后点“测试”确认 NPU 能跑。
    - 点“设为默认助理（root）”，再点“授予权限”。
 2. 系统设置 → 系统 → 手势 → 系统导航 → 手势导航旁的齿轮 → 打开“滑动调用助理”。

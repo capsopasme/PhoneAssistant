@@ -315,10 +315,10 @@ class Tools(private val ctx: Context, private val host: Host) {
             .filter { it.isNotBlank() }.distinct().joinToString(" "))
         f.optJSONObject("current")?.let { c ->
             out.put("now", JSONObject()
-                .put("temp_c", c.optDouble("temperature_2m"))
-                .put("feels_like_c", c.optDouble("apparent_temperature"))
+                .putNum("temp_c", c.optDouble("temperature_2m"))
+                .putNum("feels_like_c", c.optDouble("apparent_temperature"))
                 .put("humidity_pct", c.optInt("relative_humidity_2m"))
-                .put("wind_kmh", c.optDouble("wind_speed_10m"))
+                .putNum("wind_kmh", c.optDouble("wind_speed_10m"))
                 .put("weather", wmo(c.optInt("weather_code"))))
         }
         f.optJSONObject("daily")?.let { d ->
@@ -328,14 +328,18 @@ class Tools(private val ctx: Context, private val host: Host) {
                 arr.put(JSONObject()
                     .put("date", dates.optString(i))
                     .put("weather", wmo(d.optJSONArray("weather_code")?.optInt(i) ?: -1))
-                    .put("max_c", d.optJSONArray("temperature_2m_max")?.optDouble(i))
-                    .put("min_c", d.optJSONArray("temperature_2m_min")?.optDouble(i))
+                    .putNum("max_c", d.optJSONArray("temperature_2m_max")?.optDouble(i))
+                    .putNum("min_c", d.optJSONArray("temperature_2m_min")?.optDouble(i))
                     .put("rain_chance_pct", d.optJSONArray("precipitation_probability_max")?.optInt(i)))
             }
             out.put("daily", arr)
         }
         return ok(out)
     }
+
+    /** missing values come back from optDouble as NaN, which org.json refuses to put: skip them */
+    private fun JSONObject.putNum(key: String, v: Double?): JSONObject =
+        if (v == null || v.isNaN() || v.isInfinite()) this else put(key, v)
 
     private fun wmo(code: Int) = when (code) {
         0 -> "晴"
@@ -413,20 +417,23 @@ class Tools(private val ctx: Context, private val host: Host) {
     }
 
     private fun setRingerMode(a: JSONObject): String {
-        val am = audio
-        when (a.optString("mode")) {
-            "normal" -> am.ringerMode = AudioManager.RINGER_MODE_NORMAL
-            "vibrate" -> am.ringerMode = AudioManager.RINGER_MODE_VIBRATE
-            "silent" -> {
-                // silent needs DND policy access: grant it to ourselves once, with root
-                val nm = ctx.getSystemService(NotificationManager::class.java)
-                if (!nm.isNotificationPolicyAccessGranted) {
-                    RootShell.run("cmd notification allow_dnd ${ctx.packageName}")
-                }
-                if (!nm.isNotificationPolicyAccessGranted) return err("没有勿扰权限，无法静音")
-                am.ringerMode = AudioManager.RINGER_MODE_SILENT
-            }
+        val mode = when (a.optString("mode")) {
+            "normal" -> AudioManager.RINGER_MODE_NORMAL
+            "vibrate" -> AudioManager.RINGER_MODE_VIBRATE
+            "silent" -> AudioManager.RINGER_MODE_SILENT
             else -> return err("mode 只能是 normal / vibrate / silent")
+        }
+        // entering silent, and also leaving it (it is a DND state), needs DND policy access:
+        // grant it to ourselves once, with root
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            RootShell.run("cmd notification allow_dnd ${ctx.packageName}")
+        }
+        val am = audio
+        try {
+            am.ringerMode = mode
+        } catch (e: SecurityException) {
+            return err("没有勿扰权限，无法切换铃声模式")
         }
         return ok("铃声模式已切换")
     }

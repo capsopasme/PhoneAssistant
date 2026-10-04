@@ -2,6 +2,7 @@ name: Build APK
 
 # Builds the assistant for arm64-v8a: sherpa-onnx (with Qualcomm QNN) from source, then the APK.
 # Run it from "Actions" -> "Build APK" -> "Run workflow", or push to main.
+# Pushing a tag like v0.2.0 also publishes a GitHub Release with the APK attached.
 #
 # Optional repository secrets for a stable signature (same as the fcitx5-android voice CI,
 # you can reuse that keystore):
@@ -14,10 +15,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ["v*"]
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
@@ -52,6 +56,11 @@ jobs:
           SIGN_KEY_ALIAS: ${{ secrets.SIGN_KEY_ALIAS }}
           SIGN_KEY_PWD: ${{ secrets.SIGN_KEY_PWD }}
         run: |
+          if [ -n "$SIGN_KEY_BASE64" ]; then
+            echo "Signing with the release key from secrets"
+          else
+            echo "::warning::SIGN_KEY_* secrets not set: signed with a throw-away debug key, can't update an installed build"
+          fi
           chmod +x gradlew
           ./gradlew :app:assembleRelease --stacktrace
 
@@ -60,3 +69,18 @@ jobs:
           name: phone-assistant-arm64-v8a
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          apk="PhoneAssistant-${TAG}-arm64-v8a.apk"
+          cp app/build/outputs/apk/release/*.apk "$apk"
+          notes=".github/release-notes/${TAG}.md"
+          if [ -f "$notes" ]; then
+            gh release create "$TAG" "$apk" --title "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$apk" --title "$TAG" --generate-notes
+          fi

@@ -41,13 +41,8 @@ class Agent(
     private val messages = JSONArray()
     private val launches = ArrayList<Intent>()
 
-    private val providers: List<LlmClient.Provider> = buildList {
-        if (prefs.deepseekKey.isNotEmpty()) add(LlmClient.Provider(LlmClient.Kind.DeepSeek, prefs.deepseekKey, prefs.deepseekModel))
-        if (prefs.geminiKey.isNotEmpty()) add(LlmClient.Provider(LlmClient.Kind.Gemini, prefs.geminiKey, prefs.geminiModel))
-    }
-
-    /** index into [providers]; after a fallback the session stays on the working provider */
-    private var current = 0
+    /** read once per session: the model selected in the settings, never switched mid-way */
+    private val provider: LlmClient.Provider? = prefs.currentProvider()
 
     private val tools = Tools(context, object : Tools.Host {
         override fun confirm(question: String) = ui.confirm(question)
@@ -64,14 +59,15 @@ class Agent(
     fun cancel() = llm.cancel()
 
     fun ask(question: String) {
-        if (providers.isEmpty()) {
-            listener.onError("还没有填 API Key，请打开“语音助手”设置")
+        val provider = provider ?: run {
+            listener.onError("${prefs.provider.label} 还没有填 API Key，请打开“语音助手”设置")
             return
         }
         messages.put(JSONObject().put("role", "user").put("content", question))
+        val userIndex = messages.length() - 1
         try {
             repeat(MAX_ROUNDS) {
-                val reply = chatWithFallback()
+                val reply = llm.chat(provider, messages, Tools.schemas) { delta -> listener.onText(delta) }
                 messages.put(reply.assistantMessage)
                 if (reply.toolCalls.isEmpty()) {
                     listener.onFinished(reply.text, emptyList())
@@ -95,26 +91,11 @@ class Agent(
             }
             listener.onError("步骤太多，已停止")
         } catch (e: Exception) {
+            // failed before any reply: drop the question, so asking again doesn't send it twice
+            if (messages.length() - 1 == userIndex) messages.remove(userIndex)
             if (llm.cancelled) return
             Log.w(TAG, "agent failed", e)
             listener.onError(e.message ?: e.javaClass.simpleName)
-        }
-    }
-
-    private fun chatWithFallback(): LlmClient.Reply {
-        while (true) {
-            var streamed = false
-            try {
-                return llm.chat(providers[current], messages, Tools.schemas) { delta ->
-                    streamed = true
-                    listener.onText(delta)
-                }
-            } catch (e: Exception) {
-                // fall back only if nothing reached the screen yet, so the answer doesn't repeat
-                if (llm.cancelled || streamed || current + 1 >= providers.size) throw e
-                Log.w(TAG, "${providers[current].label} failed, falling back", e)
-                current++
-            }
         }
     }
 

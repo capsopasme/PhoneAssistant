@@ -16,6 +16,15 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowBackground">@color/card</item>
+        <!--
+          edge-to-edge is forced at targetSdk 36 and the bars are transparent over the white
+          card: without this the status bar icons are white on white (only the battery
+          percentage stayed readable)
+        -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">@bool/light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/light_system_bars</item>
         <item name="android:colorAccent">@color/accent</item>
     </style>
 </resources>

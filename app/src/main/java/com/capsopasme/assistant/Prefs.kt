@@ -3,11 +3,17 @@ package com.capsopasme.assistant
 import android.content.Context
 import android.content.SharedPreferences
 import com.capsopasme.assistant.asr.SpeechModel
+import com.capsopasme.assistant.llm.LlmClient
 
 /** All settings, in one private SharedPreferences file */
 class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    /** the one model used for every request; no automatic switching to another one */
+    var provider: LlmClient.Kind
+        get() = LlmClient.Kind.fromName(sp.getString("llm_provider", null))
+        set(v) = sp.edit().putString("llm_provider", v.name).apply()
 
     var deepseekKey: String
         get() = sp.getString("deepseek_key", "") ?: ""
@@ -24,6 +30,25 @@ class Prefs(context: Context) {
     var geminiModel: String
         get() = sp.getString("gemini_model", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_GEMINI_MODEL
         set(v) = sp.edit().putString("gemini_model", v.trim()).apply()
+
+    var glmKey: String
+        get() = sp.getString("glm_key", "") ?: ""
+        set(v) = sp.edit().putString("glm_key", v.trim()).apply()
+
+    var glmModel: String
+        get() = sp.getString("glm_model", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_GLM_MODEL
+        set(v) = sp.edit().putString("glm_model", v.trim()).apply()
+
+    /** the selected provider with its key and model, null if its key is empty */
+    fun currentProvider(): LlmClient.Provider? {
+        val kind = provider
+        val (key, model) = when (kind) {
+            LlmClient.Kind.DeepSeek -> deepseekKey to deepseekModel
+            LlmClient.Kind.Glm -> glmKey to glmModel
+            LlmClient.Kind.Gemini -> geminiKey to geminiModel
+        }
+        return if (key.isEmpty()) null else LlmClient.Provider(kind, key, model)
+    }
 
     /** city used by the weather tool when none is given */
     var defaultCity: String
@@ -51,5 +76,7 @@ class Prefs(context: Context) {
     companion object {
         const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
         const val DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+        /** free tier on open.bigmodel.cn */
+        const val DEFAULT_GLM_MODEL = "glm-4.7-flash"
     }
 }

@@ -23,6 +23,7 @@ import com.capsopasme.assistant.agent.RootShell
 import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.asr.SpeechModel
+import com.capsopasme.assistant.llm.LlmClient
 
 class SettingsActivity : Activity() {
 
@@ -33,6 +34,8 @@ class SettingsActivity : Activity() {
     private lateinit var permStatus: TextView
     private lateinit var deepseekKey: EditText
     private lateinit var deepseekModel: EditText
+    private lateinit var glmKey: EditText
+    private lateinit var glmModel: EditText
     private lateinit var geminiKey: EditText
     private lateinit var geminiModel: EditText
     private lateinit var defaultCity: EditText
@@ -61,6 +64,8 @@ class SettingsActivity : Activity() {
         permStatus = findViewById(R.id.permStatus)
         deepseekKey = findViewById(R.id.deepseekKey)
         deepseekModel = findViewById(R.id.deepseekModel)
+        glmKey = findViewById(R.id.glmKey)
+        glmModel = findViewById(R.id.glmModel)
         geminiKey = findViewById(R.id.geminiKey)
         geminiModel = findViewById(R.id.geminiModel)
         defaultCity = findViewById(R.id.defaultCity)
@@ -70,12 +75,29 @@ class SettingsActivity : Activity() {
 
         deepseekKey.setText(prefs.deepseekKey)
         deepseekModel.setText(prefs.deepseekModel.takeIf { it != Prefs.DEFAULT_DEEPSEEK_MODEL } ?: "")
+        glmKey.setText(prefs.glmKey)
+        glmModel.setText(prefs.glmModel.takeIf { it != Prefs.DEFAULT_GLM_MODEL } ?: "")
         geminiKey.setText(prefs.geminiKey)
         geminiModel.setText(prefs.geminiModel.takeIf { it != Prefs.DEFAULT_GEMINI_MODEL } ?: "")
         defaultCity.setText(prefs.defaultCity)
         mirror.setText(prefs.mirrorPrefix)
         silence.setText(prefs.silenceMs.toString())
         keepLoaded.isChecked = prefs.keepModelLoaded
+
+        val llmGroup = findViewById<RadioGroup>(R.id.llmGroup)
+        LlmClient.Kind.entries.forEach { k ->
+            llmGroup.addView(RadioButton(this).apply {
+                id = View.generateViewId()
+                text = k.label
+                tag = k
+                textSize = 15f
+                setTextColor(getColor(R.color.text_primary))
+                isChecked = k == prefs.provider
+            })
+        }
+        llmGroup.setOnCheckedChangeListener { g, checkedId ->
+            prefs.provider = g.findViewById<View>(checkedId).tag as LlmClient.Kind
+        }
 
         val group = findViewById<RadioGroup>(R.id.modelGroup)
         SpeechModel.entries.forEach { m ->
@@ -152,6 +174,8 @@ class SettingsActivity : Activity() {
         ModelManager.setListener(null)
         prefs.deepseekKey = deepseekKey.text.toString()
         prefs.deepseekModel = deepseekModel.text.toString()
+        prefs.glmKey = glmKey.text.toString()
+        prefs.glmModel = glmModel.text.toString()
         prefs.geminiKey = geminiKey.text.toString()
         prefs.geminiModel = geminiModel.text.toString()
         prefs.defaultCity = defaultCity.text.toString()
@@ -235,6 +259,7 @@ class SettingsActivity : Activity() {
 
             override fun onServiceCrashed() {
                 modelStatus.text = "识别进程崩溃（NPU 初始化失败？），可以换 CPU 模型"
+                testClient?.unbind()
             }
         }).also { testClient = it }
         client.selfTest(model)

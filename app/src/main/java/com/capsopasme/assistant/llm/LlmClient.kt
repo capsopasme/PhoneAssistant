@@ -10,20 +10,29 @@ import java.net.URL
 
 /**
  * Minimal OpenAI-compatible Chat Completions client with streaming and tool calls.
- * Works with DeepSeek and with Gemini's OpenAI compatibility endpoint.
+ * Works with DeepSeek, Zhipu GLM and Gemini's OpenAI compatibility endpoint.
  * No dependencies: HttpURLConnection + org.json. Blocking, call it from a worker thread.
  */
 class LlmClient {
 
-    enum class Kind { DeepSeek, Gemini }
+    enum class Kind(val label: String) {
+        DeepSeek("DeepSeek"),
+        Glm("智谱 GLM"),
+        Gemini("Gemini");
+
+        companion object {
+            fun fromName(name: String?) = entries.firstOrNull { it.name == name } ?: DeepSeek
+        }
+    }
 
     class Provider(val kind: Kind, val key: String, val model: String) {
         val url: String
             get() = when (kind) {
                 Kind.DeepSeek -> "https://api.deepseek.com/chat/completions"
+                Kind.Glm -> "https://open.bigmodel.cn/api/paas/v4/chat/completions"
                 Kind.Gemini -> "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
             }
-        val label: String get() = kind.name
+        val label: String get() = kind.label
     }
 
     class ToolCall(val id: String, val name: String, val arguments: String)
@@ -56,17 +65,21 @@ class LlmClient {
     fun chat(provider: Provider, messages: JSONArray, tools: JSONArray, onText: (String) -> Unit): Reply {
         val body = JSONObject().apply {
             put("model", provider.model)
-            put("messages", messagesFor(provider.kind, messages))
-            if (tools.length() > 0) put("tools", tools)
+            put("messages", messages)
+            if (tools.length() > 0) put("tools", toolsFor(provider.kind, tools))
             put("stream", true)
-            // Gemini counts thinking tokens against this budget too
-            put("max_tokens", 2048)
             when (provider.kind) {
                 // non-thinking mode: these are short, latency-sensitive commands
                 Kind.DeepSeek -> put("thinking", JSONObject().put("type", "disabled"))
+                // GLM-4.x / 5.0-5.2 think by default but can turn it off; 5.3 always thinks
+                Kind.Glm -> if (!provider.model.lowercase().startsWith("glm-5.3")) {
+                    put("thinking", JSONObject().put("type", "disabled"))
+                }
                 // Gemini 3 can't turn reasoning off, keep it minimal
                 Kind.Gemini -> put("reasoning_effort", "low")
             }
+            // Gemini counts thinking tokens against this budget too
+            put("max_tokens", 2048)
         }
         if (cancelled) throw LlmException("已取消")
         val conn = URL(provider.url).openConnection() as HttpURLConnection
@@ -84,9 +97,14 @@ class LlmClient {
             val code = conn.responseCode
             if (code != HttpURLConnection.HTTP_OK) {
                 val err = conn.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
-                throw LlmException("${provider.label} HTTP $code ${extractError(err)}", code)
+                val hint = when (code) {
+                    401, 403 -> "（API Key 无效或没有权限）"
+                    429 -> "（请求太频繁或额度用完）"
+                    else -> ""
+                }
+                throw LlmException("${provider.label} HTTP $code$hint ${extractError(err)}".trim(), code)
             }
-            return readStream(conn, onText)
+            return readStream(conn, provider, onText)
         } catch (e: IOException) {
             if (cancelled) throw LlmException("已取消")
             throw e
@@ -103,7 +121,8 @@ class LlmClient {
         var extra: JSONObject? = null
     }
 
-    private fun readStream(conn: HttpURLConnection, onText: (String) -> Unit): Reply {
+    private fun readStream(conn: HttpURLConnection, provider: Provider, onText: (String) -> Unit): Reply {
+        var finishReason = ""
         val text = StringBuilder()
         val reasoning = StringBuilder()
         val calls = ArrayList<CallBuilder>()
@@ -121,7 +140,9 @@ class LlmClient {
                     continue
                 }
                 chunk.optJSONObject("error")?.let { throw LlmException(it.optString("message", "未知错误")) }
-                val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta") ?: continue
+                val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: continue
+                choice.optStringOrNull("finish_reason")?.let { if (it.isNotEmpty()) finishReason = it }
+                val delta = choice.optJSONObject("delta") ?: continue
                 delta.optStringOrNull("reasoning_content")?.let { reasoning.append(it) }
                 delta.optStringOrNull("content")?.let {
                     if (it.isNotEmpty()) {
@@ -159,6 +180,14 @@ class LlmClient {
         val toolCalls = calls.filter { it.name.isNotEmpty() }.mapIndexed { i, b ->
             ToolCall(b.id.ifEmpty { "call_$i" }, b.name, b.args.toString().ifBlank { "{}" })
         }
+        if (text.isBlank() && toolCalls.isEmpty()) {
+            // e.g. GLM "sensitive", or the thinking used up max_tokens: don't pretend it worked
+            throw LlmException(when (finishReason) {
+                "sensitive", "content_filter" -> "${provider.label} 拒绝回答（内容审核）"
+                "length" -> "${provider.label} 输出被截断，没有得到回答"
+                else -> "${provider.label} 没有返回内容${if (finishReason.isNotEmpty()) "（$finishReason）" else ""}"
+            })
+        }
         val message = JSONObject().apply {
             put("role", "assistant")
             put("content", text.toString())
@@ -179,23 +208,20 @@ class LlmClient {
         return Reply(text.toString(), toolCalls, message)
     }
 
-    /** Drop the other provider's private fields (after a fallback mid-conversation) */
-    private fun messagesFor(kind: Kind, messages: JSONArray): JSONArray {
+    /**
+     * Parameterless tools carry no schema (Gemini rejects an object with no properties);
+     * the other APIs get an explicit empty object schema, which they expect.
+     */
+    private fun toolsFor(kind: Kind, tools: JSONArray): JSONArray {
+        if (kind == Kind.Gemini) return tools
         val out = JSONArray()
-        for (i in 0 until messages.length()) {
-            val m = messages.getJSONObject(i)
-            if (m.optString("role") != "assistant") {
-                out.put(m)
-                continue
+        for (i in 0 until tools.length()) {
+            val t = JSONObject(tools.getJSONObject(i).toString())
+            val f = t.optJSONObject("function")
+            if (f != null && !f.has("parameters")) {
+                f.put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
             }
-            val copy = JSONObject(m.toString())
-            if (kind != Kind.DeepSeek) copy.remove("reasoning_content")
-            if (kind != Kind.Gemini) {
-                copy.optJSONArray("tool_calls")?.let { arr ->
-                    for (j in 0 until arr.length()) arr.optJSONObject(j)?.remove("extra_content")
-                }
-            }
-            out.put(copy)
+            out.put(t)
         }
         return out
     }

@@ -143,22 +143,22 @@ object ModelManager {
         val appCtx = ctx.applicationContext
         executor.execute {
             val tmp = File(rootDir(appCtx), ".tmp-${model.dirName}")
-            try {
+            val result: State = try {
                 tmp.deleteRecursively()
                 block(tmp)
                 installFromTmp(appCtx, tmp, model)
-                setState(model, diskState(appCtx, model))
+                diskState(appCtx, model)
             } catch (e: Throwable) {
                 Log.w(TAG, "model job failed", e)
-                setState(
-                    model,
-                    if (cancelled) diskState(appCtx, model)
-                    else State.Failed(e.localizedMessage ?: e.javaClass.simpleName)
-                )
+                if (cancelled) diskState(appCtx, model)
+                else State.Failed(e.localizedMessage ?: e.javaClass.simpleName)
             } finally {
                 tmp.deleteRecursively()
-                busy = null
             }
+            // not busy any more before the final state reaches the UI: otherwise the
+            // download button could keep showing "取消" after the job ended
+            busy = null
+            setState(model, result)
         }
     }
 
