@@ -247,6 +247,9 @@ class Tools(private val ctx: Context, private val host: Host) {
         val enc = URLEncoder.encode(dest, "UTF-8")
         val pm = ctx.packageManager
         val intent = when {
+            // the user's default map: geo: with a query opens CoMaps' search for it
+            isInstalled(LocalCommands.DEFAULT_MAP) ->
+                Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$enc")).setPackage(LocalCommands.DEFAULT_MAP)
             isInstalled("com.autonavi.minimap") -> {
                 val t = when (mode) { "transit" -> 1; "walking" -> 2; "riding" -> 3; else -> 0 }
                 Intent(Intent.ACTION_VIEW, Uri.parse("amapuri://route/plan/?sourceApplication=assistant&dname=$enc&dev=0&t=$t"))
@@ -260,7 +263,7 @@ class Tools(private val ctx: Context, private val host: Host) {
             else -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$enc"))
         }
         if (intent.resolveActivity(pm) == null) return err("没有可用的地图应用")
-        return launchOrError(intent, "导航到 $dest")
+        return launchOrError(intent, if (intent.`package` == LocalCommands.DEFAULT_MAP) "CoMaps 搜索“$dest”" else "导航到 $dest")
     }
 
     private fun isInstalled(pkg: String) = try {
@@ -272,6 +275,7 @@ class Tools(private val ctx: Context, private val host: Host) {
 
     private fun openApp(a: JSONObject): String {
         val name = a.optString("name").trim().ifEmpty { return err("缺少应用名") }
+        LocalCommands.defaultApp(ctx, name)?.let { return launchOrError(LocalCommands.launchIntent(it), it.label) }
         val ranked = LocalCommands.rankApps(ctx, name)
         val best = ranked.firstOrNull()?.takeIf { it.score >= 0.6 }
             ?: return err("没有找到名为“$name”的应用")
@@ -285,9 +289,13 @@ class Tools(private val ctx: Context, private val host: Host) {
 
     private fun webSearch(a: JSONObject): String {
         val q = a.optString("query").ifBlank { return err("缺少搜索词") }
+        val url = Intent(Intent.ACTION_VIEW, Uri.parse("https://cn.bing.com/search?q=" + URLEncoder.encode(q, "UTF-8")))
         val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q)
-        val intent = if (search.resolveActivity(ctx.packageManager) != null) search
-        else Intent(Intent.ACTION_VIEW, Uri.parse("https://cn.bing.com/search?q=" + URLEncoder.encode(q, "UTF-8")))
+        val intent = when {
+            isInstalled(LocalCommands.DEFAULT_BROWSER) -> url.setPackage(LocalCommands.DEFAULT_BROWSER)
+            search.resolveActivity(ctx.packageManager) != null -> search
+            else -> url
+        }
         return launchOrError(intent, "搜索“$q”")
     }
 
@@ -632,6 +640,15 @@ class Tools(private val ctx: Context, private val host: Host) {
             "auto_rotate" -> "settings put system accelerometer_rotation ${if (on) 1 else 0}" to "自动旋转"
             "dark_mode" -> "cmd uimode night ${if (on) "yes" else "no"}" to "深色模式"
             "battery_saver" -> "cmd power set-mode ${if (on) 1 else 0} || settings put global low_power ${if (on) 1 else 0}" to "省电模式"
+            // debugging lives under developer options: switching it on shows them too,
+            // switching developer options off turns both kinds of debugging off as well
+            "developer_options" -> (if (on) "settings put global development_settings_enabled 1"
+            else "settings put global adb_wifi_enabled 0; settings put global adb_enabled 0; " +
+                    "settings put global development_settings_enabled 0") to "开发者选项"
+            "usb_debugging" -> (if (on) "settings put global development_settings_enabled 1 && settings put global adb_enabled 1"
+            else "settings put global adb_enabled 0") to "USB 调试"
+            "wireless_debugging" -> if (on) return enableWirelessDebugging()
+            else "settings put global adb_wifi_enabled 0" to "无线调试"
             else -> return err("不支持的开关：$setting")
         }
         val risky = (setting == "airplane_mode" && on) || (setting == "mobile_data" && !on) || (setting == "wifi" && !on)
@@ -639,6 +656,28 @@ class Tools(private val ctx: Context, private val host: Host) {
             return err("用户取消了")
         }
         return rootAction(command, "$label 已${if (on) "打开" else "关闭"}")
+    }
+
+    /**
+     * Wireless debugging only stays on while connected to WiFi (the system switches it back off
+     * otherwise) and gets a new random port each time: wait for the port and report it.
+     */
+    private fun enableWirelessDebugging(): String {
+        val r = RootShell.run(
+            "settings put global development_settings_enabled 1 && settings put global adb_wifi_enabled 1 && " +
+                    "for i in 1 2 3 4 5 6 7 8; do sleep 0.5; p=\$(getprop service.adb.tls.port); " +
+                    "[ -n \"\$p\" ] && [ \"\$p\" != 0 ] && break; done; " +
+                    "echo \"state=\$(settings get global adb_wifi_enabled) port=\$p\"; ip -4 -o addr show wlan0",
+            12_000
+        )
+        if (!r.ok && !r.output.contains("state=")) {
+            return err("执行失败（${r.code}）：${r.output.take(200).ifEmpty { "可能没有授予 root" }}")
+        }
+        val state = Regex("state=(\\S*)").find(r.output)?.groupValues?.get(1)
+        val port = Regex("port=(\\d+)").find(r.output)?.groupValues?.get(1)?.takeIf { it != "0" }
+        val ip = Regex("inet (\\d+\\.\\d+\\.\\d+\\.\\d+)").find(r.output)?.groupValues?.get(1)
+        if (state != "1") return err("无线调试没能保持打开：需要先连上 WiFi")
+        return ok(if (port != null && ip != null) "无线调试已打开，地址 $ip:$port" else "无线调试已打开")
     }
 
     private fun rootAction(command: String, success: String): String {
@@ -702,7 +741,8 @@ class Tools(private val ctx: Context, private val host: Host) {
                 fn("navigate", "用地图导航到目的地",
                     props("destination" to str("目的地"), "mode" to enumOf("出行方式", "driving", "transit", "walking", "riding")),
                     "destination")
-                fn("open_app", "打开手机上的应用", props("name" to str("应用名称")), "name")
+                fn("open_app", "打开手机上的应用。用户只说类别时（地图、计算器、浏览器、相机、相册、音乐、视频、录音机、阅读器、记事本等）直接把类别名作为 name，会打开用户设定的默认应用",
+                    props("name" to str("应用名称或类别")), "name")
                 fn("web_search", "在浏览器里搜索（用户明确要搜索、或需要最新网络信息时用）", props("query" to str("搜索词")), "query")
                 fn("get_weather", "查天气（实时和未来几天）",
                     props("city" to str("城市名，可选，不填用默认城市"), "days" to int("预报天数 1-7，默认 1")))
@@ -729,7 +769,8 @@ class Tools(private val ctx: Context, private val host: Host) {
                 fn("toggle_setting", "打开或关闭系统开关",
                     props(
                         "setting" to enumOf("开关", "wifi", "bluetooth", "mobile_data", "airplane_mode", "dnd",
-                            "location", "nfc", "auto_rotate", "dark_mode", "battery_saver"),
+                            "location", "nfc", "auto_rotate", "dark_mode", "battery_saver",
+                            "developer_options", "usb_debugging", "wireless_debugging"),
                         "enabled" to bool("true 打开，false 关闭"),
                     ), "setting", "enabled")
                 fn("screen_off", "锁屏/关闭屏幕", props())

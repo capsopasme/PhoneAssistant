@@ -5,7 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 
 /**
- * Commands simple enough to run without the language model: "打开 xx" and "倒计时 xx".
+ * Commands simple enough to run without the language model: "打开 xx", "倒计时 xx" and the
+ * developer switches ("打开开发者选项", "关闭 USB 调试", "开启无线调试").
  * Parsed and executed on the phone (no network, no API key), in well under a second.
  *
  * Anything this isn't sure about returns null and goes to the model as usual: settings switches
@@ -17,6 +18,9 @@ object LocalCommands {
     sealed interface Command
     class OpenApp(val label: String, val intent: Intent) : Command
     class Timer(val seconds: Int) : Command
+
+    /** [setting] is a toggle_setting value: developer_options / usb_debugging / wireless_debugging */
+    class Switch(val setting: String, val on: Boolean) : Command
 
     private val POLITE_PREFIX = Regex("^(请你|请|帮我|给我|麻烦你|麻烦|帮忙|你|我想|我要|快)+")
     private val POLITE_SUFFIX = Regex("(一下子|一下|吧|啊|呀|哈|呗|好吗|好不好|谢谢)+$")
@@ -43,6 +47,7 @@ object LocalCommands {
         if (s.isEmpty()) return null
 
         parseTimer(s)?.let { return it }
+        parseDevSwitch(s)?.let { return it }
 
         val m = OPEN_VERB.find(s) ?: return null
         var name = s.substring(m.range.last + 1).replace(APP_SUFFIX, "")
@@ -62,7 +67,81 @@ object LocalCommands {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // developer switches
+
+    private val ON_VERB = Regex("^(打开|开启|启用|启动|开)")
+    private val OFF_VERB = Regex("^(关闭|关掉|关上|禁用|停用|取消|关)")
+    private val ON_SUFFIX = Regex("(打开|开启|启用|开起来|开)$")
+    private val OFF_SUFFIX = Regex("(关闭|关掉|关上|禁用|停用|关了|关)$")
+
+    private val DEV_TARGETS = listOf(
+        "developer_options" to listOf("开发者模式", "开发者选项", "开发人员选项", "开发者设置", "开发选项", "开发者"),
+        "usb_debugging" to listOf("usb调试", "adb调试", "有线调试", "usb调试模式", "adb"),
+        "wireless_debugging" to listOf("无线调试", "无线adb", "wifi调试", "无线网络调试", "无线adb调试", "无线调试模式"),
+    )
+
+    /** "打开开发者选项" "关掉USB调试" "把无线调试打开" "无线调试关一下" */
+    fun parseDevSwitch(s: String): Switch? {
+        val t = s.removePrefix("把").removePrefix("将")
+        // every reading of the verb ("开发者选项打开": the leading 开 is not the verb), best wins
+        val readings = buildList {
+            OFF_VERB.find(t)?.let { add(false to t.substring(it.range.last + 1)) }
+            ON_VERB.find(t)?.let { add(true to t.substring(it.range.last + 1)) }
+            OFF_SUFFIX.find(t)?.let { add(false to t.substring(0, it.range.first)) }
+            ON_SUFFIX.find(t)?.let { add(true to t.substring(0, it.range.first)) }
+        }
+        var best: Triple<String, Boolean, Double>? = null
+        for ((on, rest) in readings) {
+            val target = rest.removePrefix("一下").removeSuffix("一下").removeSuffix("功能").removeSuffix("开关")
+            if (target.isEmpty() || target.length > 12) continue
+            // text or sound must match a name closely: "usb调式" is fine, "调试" alone is not
+            for ((setting, names) in DEV_TARGETS) {
+                for (n in names) {
+                    val sc = FuzzyMatch.score(target, n)
+                    if (sc >= 0.9 && sc > (best?.third ?: 0.0)) best = Triple(setting, on, sc)
+                }
+            }
+        }
+        return best?.let { Switch(it.first, it.second) }
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // apps
+
+    /**
+     * The user's default app for a kind of app: "打开地图" opens CoMaps rather than whatever app
+     * happens to be labelled 地图. Used by the local path and by the model's open_app.
+     */
+    private val DEFAULT_APPS = listOf(
+        "app.comaps.fdroid" to listOf("地图", "地图软件", "导航软件"),
+        "com.sadellie.unitto" to listOf("计算机", "计算器", "单位换算"),
+        "com.anxcye.anx_reader" to listOf("阅读器", "电子书", "电子书阅读器", "看书"),
+        "xyz.mpv.rex" to listOf("视频", "视频播放器"),
+        "org.mozilla.fennec_fdroid" to listOf("浏览器", "火狐"),
+        "me.mudkip.moememos" to listOf("书签", "便签", "记事本", "备忘录", "笔记"),
+        "org.fossify.voicerecorder" to listOf("录音机", "录音"),
+        "app.grapheneos.camera" to listOf("相机", "照相机"),
+        "org.akanework.gramophone" to listOf("音乐", "音乐播放器", "留声机"),
+        "deckers.thibault.aves" to listOf("相册", "图库"),
+    )
+
+    const val DEFAULT_BROWSER = "org.mozilla.fennec_fdroid"
+    const val DEFAULT_MAP = "app.comaps.fdroid"
+
+    /** the default app for [name] if [name] names one of the kinds above and it is installed */
+    fun defaultApp(context: Context, name: String): AppMatch? {
+        val pkg = DEFAULT_APPS.firstOrNull { (_, kinds) ->
+            kinds.any { FuzzyMatch.score(name, it) >= 0.95 }
+        }?.first ?: return null
+        val pm = context.packageManager
+        val launch = pm.getLaunchIntentForPackage(pkg)?.component ?: return null
+        val label = try {
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0))).toString()
+        } catch (_: PackageManager.NameNotFoundException) {
+            return null
+        }
+        return AppMatch(label, pkg, launch.className, 1.0)
+    }
 
     class AppMatch(val label: String, val pkg: String, val activity: String, val score: Double)
 
@@ -91,6 +170,7 @@ object LocalCommands {
      * ahead of the runner-up), otherwise let the model handle it
      */
     fun findApp(context: Context, name: String, strict: Boolean): OpenApp? {
+        defaultApp(context, name)?.let { return OpenApp(it.label, launchIntent(it)) }
         val ranked = rankApps(context, name)
         val best = ranked.firstOrNull() ?: return null
         val second = ranked.getOrNull(1)?.score ?: 0.0

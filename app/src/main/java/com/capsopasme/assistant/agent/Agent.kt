@@ -123,17 +123,24 @@ class Agent(
         false
     }
 
+    /** (text to show, ok) from a tool's JSON result */
+    private fun toolResult(json: String): Pair<String, Boolean> {
+        val result = JSONObject(json)
+        return if (result.optBoolean("ok")) result.optString("result") to true
+        else result.optString("error", "执行失败") to false
+    }
+
     private fun runLocal(question: String, command: LocalCommands.Command) {
         val (text, ok) = when (command) {
             is LocalCommands.OpenApp -> {
                 launches.add(command.intent)
                 "已打开${command.label}" to true
             }
-            is LocalCommands.Timer -> {
-                val result = JSONObject(tools.execute("set_timer", JSONObject().put("seconds", command.seconds).toString()))
-                if (result.optBoolean("ok")) result.optString("result") to true
-                else result.optString("error", "设置倒计时失败") to false
-            }
+            is LocalCommands.Timer -> toolResult(tools.execute("set_timer", JSONObject().put("seconds", command.seconds).toString()))
+            is LocalCommands.Switch -> toolResult(tools.execute(
+                "toggle_setting",
+                JSONObject().put("setting", command.setting).put("enabled", command.on).toString()
+            ))
         }
         // keep it in the conversation, so a follow-up question has the context
         messages.put(JSONObject().put("role", "user").put("content", question))
