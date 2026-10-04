@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="scrim">#55000000</color>
+    <color name="card">#FF1F1F24</color>
+    <color name="text_primary">#FFE6E5EB</color>
+    <color name="text_secondary">#FFA7A6AE</color>
+    <color name="accent">#FF9AABFF</color>
+    <color name="accent_soft">#299AABFF</color>
+    <color name="error">#FFFF8A80</color>
+    <color name="input_bg">#FF2B2B31</color>
+</resources>

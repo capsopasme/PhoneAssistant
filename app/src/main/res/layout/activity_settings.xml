@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/scroll"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="语音助手"
+            android:textColor="@color/text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <!-- entry -->
+        <TextView style="@style/SectionTitle" android:text="唤起方式" />
+
+        <TextView
+            android:id="@+id/roleStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/roleRoot"
+                style="@style/RowButton"
+                android:text="设为默认助理（root）" />
+            <Button
+                android:id="@+id/roleSettings"
+                style="@style/RowButton"
+                android:text="打开系统设置" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Hint"
+            android:text="手势导航下从屏幕左下角或右下角斜向上滑唤起（系统设置 → 系统 → 手势 → 系统导航 → 手势导航旁的齿轮 → 打开“滑动调用助理”）。\nQuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.START。" />
+
+        <!-- llm -->
+        <TextView style="@style/SectionTitle" android:text="大模型" />
+
+        <TextView style="@style/Label" android:text="DeepSeek API Key（默认使用）" />
+        <EditText
+            android:id="@+id/deepseekKey"
+            style="@style/Field"
+            android:inputType="textPassword" />
+
+        <TextView style="@style/Label" android:text="DeepSeek 模型" />
+        <EditText
+            android:id="@+id/deepseekModel"
+            style="@style/Field"
+            android:hint="deepseek-flash" />
+
+        <TextView style="@style/Label" android:text="Gemini API Key（DeepSeek 失败时备用，可不填）" />
+        <EditText
+            android:id="@+id/geminiKey"
+            style="@style/Field"
+            android:inputType="textPassword" />
+
+        <TextView style="@style/Label" android:text="Gemini 模型" />
+        <EditText
+            android:id="@+id/geminiModel"
+            style="@style/Field"
+            android:hint="gemini-3.8-flash" />
+
+        <TextView style="@style/Label" android:text="查天气的默认城市" />
+        <EditText
+            android:id="@+id/defaultCity"
+            style="@style/Field"
+            android:hint="例如：杭州" />
+
+        <!-- speech -->
+        <TextView style="@style/SectionTitle" android:text="语音识别（离线）" />
+
+        <RadioGroup
+            android:id="@+id/modelGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/modelStatus"
+            style="@style/Body" />
+
+        <ProgressBar
+            android:id="@+id/modelProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="1000"
+            android:visibility="gone" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/modelCopy"
+                style="@style/RowButton"
+                android:text="从小企鹅复制" />
+            <Button
+                android:id="@+id/modelDownload"
+                style="@style/RowButton"
+                android:text="下载" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/modelImport"
+                style="@style/RowButton"
+                android:text="导入 .tar.bz2" />
+            <Button
+                android:id="@+id/modelTest"
+                style="@style/RowButton"
+                android:text="测试" />
+            <Button
+                android:id="@+id/modelDelete"
+                style="@style/RowButton"
+                android:text="删除" />
+        </LinearLayout>
+
+        <TextView style="@style/Label" android:text="下载加速前缀（可不填，如 https://ghfast.top/）" />
+        <EditText
+            android:id="@+id/mirror"
+            style="@style/Field"
+            android:inputType="textUri" />
+
+        <TextView style="@style/Label" android:text="说完后停顿多久算结束（毫秒，300–2000）" />
+        <EditText
+            android:id="@+id/silence"
+            style="@style/Field"
+            android:inputType="number" />
+
+        <Switch
+            android:id="@+id/keepLoaded"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="用完后保留模型（推荐）"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="保留时识别进程会被系统冻结在后台缓存里，不占 CPU、不耗电，内存紧张时系统会自动回收；下次唤起不用重新加载。关闭则每次用完立即释放。" />
+
+        <!-- permissions -->
+        <TextView style="@style/SectionTitle" android:text="权限" />
+
+        <TextView
+            android:id="@+id/permStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/permRequest"
+                style="@style/RowButton"
+                android:text="授予权限" />
+            <Button
+                android:id="@+id/rootCheck"
+                style="@style/RowButton"
+                android:text="检查 root" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Hint"
+            android:text="麦克风：语音输入。通讯录：按姓名打电话/发短信。电话：确认后直接拨出（不授予则只打开拨号盘）。root：系统开关、亮度、锁屏。" />
+    </LinearLayout>
+</ScrollView>
