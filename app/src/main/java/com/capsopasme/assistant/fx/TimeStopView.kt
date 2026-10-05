@@ -217,7 +217,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
             style == Style.Freeze -> {
                 // time flows again: the frozen sphere collapses, colour comes in from the edges
-                radius = r * (1f - easeIn(seg(t, 0f, 0.92f)))
+                radius = maxRadius * (1f - implode(seg(t, 0f, 0.92f)))
                 ring = 0.8f * (1f - seg(t, 0.85f, 1f))
                 inFrz = 1f
             }
@@ -233,7 +233,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
             }
             else -> {
                 // the call collapses into its centre, the world around it thaws
-                radius = r * (1f - easeIn(seg(t, 0f, 0.82f)))
+                radius = maxRadius * (1f - implode(seg(t, 0f, 0.82f)))
                 ring = 1f - seg(t, 0.8f, 0.95f)
                 inClear = 1f
                 outFrz = 1f - seg(t, 0.25f, 0.95f)
@@ -253,7 +253,8 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun seg(t: Float, from: Float, to: Float) = ((t - from) / (to - from)).coerceIn(0f, 1f)
     private fun easeOut(x: Float) = 1f - (1f - x).pow(3)
-    private fun easeIn(x: Float) = x * x * x
+    /** accelerating, but already moving at the start (a cubic sits still for too long) */
+    private fun implode(x: Float) = x * x
 
     companion object {
         private const val TAG = "TimeStopView"
