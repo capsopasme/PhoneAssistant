@@ -163,6 +163,68 @@
             style="@style/Hint"
             android:text="保留时识别进程会被系统冻结在后台缓存里，不占 CPU、不耗电，内存紧张时系统会自动回收；下次唤起不用重新加载。关闭则每次用完立即释放。" />
 
+        <!-- voice call -->
+        <TextView style="@style/SectionTitle" android:text="语音通话" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="像打电话一样连续对话：它说完你接着说，不用每次唤起。卡片右上角的电话按钮、说“进入通话模式”或“陪我聊聊”、长按桌面图标选“语音通话”都能进入；QuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.CALL。熄屏照常进行，挂断、很久没人说话或来电时结束。" />
+
+        <TextView style="@style/Label" android:text="朗读用的语音合成（系统首选 TTS 引擎）" />
+
+        <TextView
+            android:id="@+id/ttsStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/ttsSettings"
+                style="@style/RowButton"
+                android:text="系统 TTS 设置" />
+            <Button
+                android:id="@+id/ttsTest"
+                style="@style/RowButton"
+                android:text="试听" />
+        </LinearLayout>
+
+        <TextView style="@style/Label" android:text="通话里说完后停顿多久算一句结束（毫秒，300–2000）" />
+        <EditText
+            android:id="@+id/callSilence"
+            style="@style/Field"
+            android:inputType="number" />
+
+        <TextView style="@style/Label" android:text="多久没人说话自动挂断（秒，0 = 不自动挂断）" />
+        <EditText
+            android:id="@+id/callIdle"
+            style="@style/Field"
+            android:inputType="number" />
+
+        <Switch
+            android:id="@+id/callCue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="轮到你说话时响一声"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="只在熄屏或离开通话界面时响；看着通话界面时用圆球的动画提示。" />
+
+        <Switch
+            android:id="@+id/callHeadsetMic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="连着蓝牙耳机时用耳机的麦克风"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="打开：像打电话一样走蓝牙通话通道，手机放口袋里也听得清你说话，但朗读变成通话音质。关闭：朗读以高音质走耳机，用手机自己的麦克风听你说话。" />
+
         <!-- permissions -->
         <TextView style="@style/SectionTitle" android:text="权限" />
 

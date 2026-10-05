@@ -48,8 +48,14 @@ class Tools(private val ctx: Context, private val host: Host) {
         /** Queue an activity to start once this round's tools have run; the session then ends */
         fun launch(intent: Intent)
 
-        /** Start an activity right now, on the main thread (for intents with no UI of their own) */
-        fun startNow(intent: Intent)
+        /**
+         * Start an activity right now (for intents with no UI of their own, alarm / timer).
+         * @return false if it couldn't be started (screen off in a call and no root)
+         */
+        fun startNow(intent: Intent): Boolean
+
+        /** End the voice call once this answer has been spoken; false outside a call */
+        fun endCall(): Boolean = false
     }
 
     private val prefs = Prefs(ctx)
@@ -83,6 +89,7 @@ class Tools(private val ctx: Context, private val host: Host) {
                 "toggle_setting" -> toggleSetting(a)
                 "screen_off" -> rootAction("input keyevent 223", "已锁屏")
                 "get_device_status" -> deviceStatus()
+                "hang_up" -> if (host.endCall()) ok("说完这句回复后通话会结束") else err("现在不在通话中")
                 else -> err("没有这个工具：$name")
             }
         } catch (e: SecurityException) {
@@ -203,21 +210,21 @@ class Tools(private val ctx: Context, private val host: Host) {
         })
     }
 
-    /** @return (number, null) or (null, error json for the model) */
-    private fun resolveNumber(target: String): Pair<String?, String?> {
+    /** @return (contact, null) or (null, error json for the model); a bare number has an empty name */
+    private fun resolveNumber(target: String): Pair<Contact?, String?> {
         val t = target.trim()
         if (t.isEmpty()) return null to err("缺少联系人或号码")
         val looksLikeNumber = t.all { it.isDigit() || it in "+-() " }
         if (looksLikeNumber) {
             val digits = t.filter { it.isDigit() || it == '+' }
-            return if (digits.length >= 3) digits to null else null to err("号码不完整")
+            return if (digits.length >= 3) Contact("", digits) to null else null to err("号码不完整")
         }
         val list = queryContacts(t)
         val exact = list.filter { it.name == t }
         return when {
             list.isEmpty() -> null to err("通讯录里没有找到“$t”")
-            list.size == 1 -> list[0].number to null
-            exact.size == 1 -> exact[0].number to null
+            list.size == 1 -> list[0] to null
+            exact.size == 1 -> exact[0] to null
             else -> null to err(
                 "匹配到多个号码，请让用户选择：" + list.joinToString("；") { "${it.name} ${it.number}" }
             )
@@ -225,17 +232,21 @@ class Tools(private val ctx: Context, private val host: Host) {
     }
 
     private fun callPhone(a: JSONObject): String {
-        val (number, error) = resolveNumber(a.optString("target"))
-        if (number == null) return error!!
-        if (!host.confirm("拨打 $number ？")) return err("用户取消了拨号")
+        val (contact, error) = resolveNumber(a.optString("target"))
+        if (contact == null) return error!!
+        val number = contact.number
+        // in a voice call this is read aloud: the name is what the user recognises
+        val who = if (contact.name.isNotEmpty()) "${contact.name}（$number）" else number
+        if (!host.confirm("拨打 $who ？")) return err("用户取消了拨号")
         val canCall = ctx.checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
         val intent = Intent(if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
         return launchOrError(intent, if (canCall) "正在拨打 $number" else "拨号盘（$number）")
     }
 
     private fun composeSms(a: JSONObject): String {
-        val (number, error) = resolveNumber(a.optString("target"))
-        if (number == null) return error!!
+        val (contact, error) = resolveNumber(a.optString("target"))
+        if (contact == null) return error!!
+        val number = contact.number
         val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null))
             .putExtra("sms_body", a.optString("text"))
         return launchOrError(intent, "短信编辑页（$number，需要用户点发送）")
@@ -729,7 +740,9 @@ class Tools(private val ctx: Context, private val host: Host) {
     /** Start right away, for intents that don't leave this screen (alarm / timer with SKIP_UI) */
     private fun startNow(intent: Intent, success: String): String {
         if (intent.resolveActivity(ctx.packageManager) == null) return err("没有应用能处理这个操作")
-        host.startNow(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        if (!host.startNow(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) {
+            return err("没能在后台打开时钟应用（熄屏时需要 root 权限），请亮屏后再试")
+        }
         return ok(success)
     }
 
@@ -752,6 +765,15 @@ class Tools(private val ctx: Context, private val host: Host) {
         private const val GRAMOPHONE = "org.akanework.gramophone"
         private const val MUSIC_MIN_SCORE = 0.6
         private const val ALREADY = "__ALREADY__"
+
+        /** the tools for a sheet session, or for a voice call (+ hang_up) */
+        fun schemasFor(voice: Boolean): JSONArray = if (voice) callSchemas else schemas
+
+        private val callSchemas: JSONArray by lazy {
+            JSONArray(schemas.toString()).apply {
+                fn("hang_up", "结束这次语音通话（用户说再见、没事了、挂了吧等时调用），回复里简短道别", props())
+            }
+        }
 
         /** Tool schemas, OpenAI function-calling format */
         val schemas: JSONArray by lazy {

@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/callRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/call_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp">
+
+    <!-- title row: what this is, how long, captions switch -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="语音通话"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <Chronometer
+                android:id="@+id/duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/captionsToggle"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_round_button"
+            android:contentDescription="字幕"
+            android:padding="10dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_captions"
+            android:tint="@color/accent" />
+    </LinearLayout>
+
+    <!-- the circle, tappable -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <com.capsopasme.assistant.call.OrbView
+            android:id="@+id/orb"
+            android:layout_width="280dp"
+            android:layout_height="280dp"
+            android:layout_gravity="center"
+            android:background="@null"
+            android:clickable="true"
+            android:contentDescription="点一下打断或说话"
+            android:focusable="true" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/callStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:minHeight="20dp"
+        android:textColor="@color/accent"
+        android:textSize="14sp" />
+
+    <!-- captions: the user's words, then the answer -->
+    <com.capsopasme.assistant.call.CaptionScrollView
+        android:id="@+id/captions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:fadingEdgeLength="16dp"
+        android:requiresFadingEdge="vertical"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/callUser"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/callAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:lineSpacingExtra="3dp"
+                android:textColor="@color/text_primary"
+                android:textSize="19sp" />
+        </LinearLayout>
+    </com.capsopasme.assistant.call.CaptionScrollView>
+
+    <LinearLayout
+        android:id="@+id/callConfirmRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/callConfirmNo"
+            android:layout_width="120dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_confirm_no"
+            android:stateListAnimator="@null"
+            android:text="取消"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/callConfirmYes"
+            android:layout_width="120dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_confirm_yes"
+            android:stateListAnimator="@null"
+            android:text="确定"
+            android:textColor="#FFFFFFFF"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <!-- mute · hang up · speaker -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:layout_marginBottom="20dp"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <LinearLayout style="@style/CallAction">
+
+            <ImageButton
+                android:id="@+id/callMute"
+                style="@style/CallButton"
+                android:contentDescription="静音"
+                android:src="@drawable/ic_mic_plain" />
+
+            <TextView
+                android:id="@+id/callMuteLabel"
+                style="@style/CallLabel"
+                android:text="静音" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/CallAction">
+
+            <ImageButton
+                android:id="@+id/callHangUp"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:background="@drawable/bg_hang_up"
+                android:contentDescription="挂断"
+                android:elevation="2dp"
+                android:padding="20dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_call_end" />
+
+            <TextView
+                style="@style/CallLabel"
+                android:text="挂断" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/CallAction">
+
+            <ImageButton
+                android:id="@+id/callSpeaker"
+                style="@style/CallButton"
+                android:contentDescription="扬声器"
+                android:src="@drawable/ic_speaker" />
+
+            <TextView
+                android:id="@+id/callSpeakerLabel"
+                style="@style/CallLabel"
+                android:text="扬声器" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

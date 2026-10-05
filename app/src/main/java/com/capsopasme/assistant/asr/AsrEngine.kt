@@ -123,6 +123,12 @@ class AsrEngine private constructor(
         }
 
         /**
+         * Past this much speech the VAD splits at the next short pause (sherpa-onnx lowers the
+         * min silence then), so a segment never reaches the model's fixed window mid-word
+         */
+        fun vadMaxSpeechSeconds(model: SpeechModel): Float = (model.maxSegmentSeconds - 4f).coerceAtLeast(5f)
+
+        /**
          * Silero VAD bundled as a raw resource, copied to internal storage atomically
          * (a truncated model would make onnxruntime abort() on every start).
          */
@@ -149,7 +155,7 @@ class AsrEngine private constructor(
                     minSpeechDuration = 0.25f,
                     windowSize = VAD_WINDOW,
                     // soft limit, the service force-cuts at maxSegmentSeconds
-                    maxSpeechDuration = (model.maxSegmentSeconds - 4f).coerceAtLeast(5f),
+                    maxSpeechDuration = vadMaxSpeechSeconds(model),
                 ),
                 sampleRate = AsrProtocol.SAMPLE_RATE,
                 numThreads = 1,

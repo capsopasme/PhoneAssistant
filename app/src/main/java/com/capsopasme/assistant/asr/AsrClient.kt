@@ -109,7 +109,11 @@ class AsrClient(private val context: Context, private val listener: Listener) {
     val isSessionActive: Boolean
         get() = activeSession != 0
 
-    fun start(model: SpeechModel, partial: Boolean, silenceMs: Int, keepLoaded: Boolean) {
+    /**
+     * @param continuous call mode: speech longer than the model window keeps the session going,
+     * see [P.KEY_CONTINUOUS]
+     */
+    fun start(model: SpeechModel, partial: Boolean, silenceMs: Int, keepLoaded: Boolean, continuous: Boolean = false) {
         if (!bindOrFail()) return
         activeSession = nextSessionId()
         post(P.MSG_START) {
@@ -117,6 +121,7 @@ class AsrClient(private val context: Context, private val listener: Listener) {
             putBoolean(P.KEY_PARTIAL, partial)
             putInt(P.KEY_SILENCE_MS, silenceMs)
             putBoolean(P.KEY_KEEP_LOADED, keepLoaded)
+            putBoolean(P.KEY_CONTINUOUS, continuous)
         }
     }
 

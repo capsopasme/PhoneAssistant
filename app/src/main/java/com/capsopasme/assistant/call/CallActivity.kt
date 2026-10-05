@@ -1,0 +1,292 @@
+package com.capsopasme.assistant.call
+
+import android.Manifest
+import android.app.Activity
+import android.app.KeyguardManager
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.IBinder
+import android.view.View
+import android.view.WindowInsets
+import android.widget.Button
+import android.widget.Chronometer
+import android.widget.ImageButton
+import android.widget.TextView
+import android.widget.Toast
+import android.window.OnBackInvokedDispatcher
+import com.capsopasme.assistant.Prefs
+import com.capsopasme.assistant.R
+
+/**
+ * The voice call screen. Starts [CallService] (from here, while visible: a microphone service
+ * may only start from the foreground) and shows its state; the call itself lives in the service,
+ * so it goes on with the screen off, when this screen is left, or recreated (dark mode switched
+ * by the assistant).
+ *
+ * Shown over the lock screen, like an incoming-call screen: turning the screen back on during a
+ * call shows it without unlocking.
+ */
+class CallActivity : Activity(), CallService.Ui {
+
+    private lateinit var prefs: Prefs
+    private lateinit var orb: OrbView
+    private lateinit var status: TextView
+    private lateinit var userText: TextView
+    private lateinit var answer: TextView
+    private lateinit var captions: CaptionScrollView
+    private lateinit var captionsToggle: ImageButton
+    private lateinit var confirmRow: View
+    private lateinit var mute: ImageButton
+    private lateinit var muteLabel: TextView
+    private lateinit var speaker: ImageButton
+    private lateinit var speakerLabel: TextView
+    private lateinit var duration: Chronometer
+
+    private var service: CallService? = null
+    private var bound = false
+    private var visible = false
+    private var chronoBase = 0L
+    private var backHintShown = false
+    private var closing = false
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder) {
+            val s = (binder as CallService.LocalBinder).service
+            service = s
+            s.setUiVisible(visible)
+            s.attach(this@CallActivity)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            // the process of the service is this one: only on a crash
+            service = null
+            finishCall()
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_call)
+        prefs = Prefs(this)
+        orb = findViewById(R.id.orb)
+        status = findViewById(R.id.callStatus)
+        userText = findViewById(R.id.callUser)
+        answer = findViewById(R.id.callAnswer)
+        captions = findViewById(R.id.captions)
+        captionsToggle = findViewById(R.id.captionsToggle)
+        confirmRow = findViewById(R.id.callConfirmRow)
+        mute = findViewById(R.id.callMute)
+        muteLabel = findViewById(R.id.callMuteLabel)
+        speaker = findViewById(R.id.callSpeaker)
+        speakerLabel = findViewById(R.id.callSpeakerLabel)
+        duration = findViewById(R.id.duration)
+
+        findViewById<View>(R.id.callRoot).setOnApplyWindowInsetsListener { v, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            v.setPadding(v.paddingLeft, bars.top, v.paddingRight, bars.bottom)
+            WindowInsets.CONSUMED
+        }
+        orb.setOnClickListener { service?.tap() }
+        findViewById<View>(R.id.callHangUp).setOnClickListener {
+            val s = service
+            if (s != null) s.hangUp() else finishCall()
+        }
+        mute.setOnClickListener { service?.toggleMute() }
+        speaker.setOnClickListener { service?.toggleSpeaker() }
+        findViewById<Button>(R.id.callConfirmYes).setOnClickListener { service?.answerConfirm(true) }
+        findViewById<Button>(R.id.callConfirmNo).setOnClickListener { service?.answerConfirm(false) }
+        captionsToggle.setOnClickListener {
+            prefs.callCaptions = !prefs.callCaptions
+            applyCaptions()
+        }
+        applyCaptions()
+
+        // like a phone call: leaving the screen keeps the call, the notification brings it back
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) {
+            if (!backHintShown) {
+                backHintShown = true
+                Toast.makeText(this, "通话在后台继续，可以从通知栏回来或挂断", Toast.LENGTH_SHORT).show()
+            }
+            moveTaskToBack(true)
+        }
+
+        connectOrStart()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (service == null && !bound) connectOrStart()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        visible = true
+        service?.setUiVisible(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        visible = false
+        service?.setUiVisible(false)
+    }
+
+    override fun onDestroy() {
+        service?.detach(this)
+        service = null
+        if (bound) {
+            unbindService(connection)
+            bound = false
+        }
+        super.onDestroy()
+    }
+
+    // ---------------------------------------------------------------------------------------------
+
+    private fun connectOrStart() {
+        if (CallService.running) {
+            bind()
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS), REQ_PERMS)
+            return
+        }
+        // the notification (hang up from the lock screen) needs this; the call works without it
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+        }
+        startForegroundService(Intent(this, CallService::class.java))
+        bind()
+    }
+
+    private fun bind() {
+        if (!bound) bound = bindService(Intent(this, CallService::class.java), connection, 0)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_PERMS) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            connectOrStart()
+        } else {
+            Toast.makeText(this, "需要麦克风权限才能语音通话", Toast.LENGTH_LONG).show()
+            finishCall()
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // CallService.Ui
+
+    override fun render(state: CallService.State) {
+        if (closing) return
+        orb.mode = when {
+            state.phase == CallService.Phase.Paused || state.muted && state.phase == CallService.Phase.Listening -> OrbView.Mode.Muted
+            state.phase == CallService.Phase.Listening -> OrbView.Mode.Listening
+            // the question is read out first, then the answer is listened for
+            state.phase == CallService.Phase.Confirming -> if (state.micOpen) OrbView.Mode.Listening else OrbView.Mode.Speaking
+            state.phase == CallService.Phase.Thinking -> OrbView.Mode.Thinking
+            state.phase == CallService.Phase.Speaking -> OrbView.Mode.Speaking
+            else -> OrbView.Mode.Idle
+        }
+        status.text = state.status
+
+        userText.text = state.userText
+        userText.visibility = if (state.userText.isEmpty()) View.GONE else View.VISIBLE
+        val secondary = getColor(R.color.text_secondary)
+        userText.setTextColor(if (state.userPartial) (secondary and 0x00FFFFFF) or (0x99 shl 24) else secondary)
+        val answerChanged = answer.text.toString() != state.answer
+        answer.text = state.answer
+        answer.visibility = if (state.answer.isEmpty()) View.GONE else View.VISIBLE
+        answer.setTextColor(getColor(if (state.answerIsError) R.color.error else R.color.text_primary))
+        if (answerChanged) captions.scrollToEnd()
+
+        confirmRow.visibility = if (state.confirming) View.VISIBLE else View.GONE
+
+        mute.isActivated = state.muted
+        mute.setImageResource(if (state.muted) R.drawable.ic_mic_off else R.drawable.ic_mic_plain)
+        muteLabel.text = if (state.muted) "已静音" else "静音"
+
+        speaker.isEnabled = state.canSwitchSpeaker
+        speaker.isActivated = state.canSwitchSpeaker && state.speakerOn
+        when {
+            state.headphones -> {
+                speaker.setImageResource(R.drawable.ic_headset)
+                speakerLabel.text = "耳机"
+            }
+            state.speakerOn || !state.canSwitchSpeaker -> {
+                speaker.setImageResource(R.drawable.ic_speaker)
+                speakerLabel.text = "扬声器"
+            }
+            else -> {
+                speaker.setImageResource(R.drawable.ic_earpiece)
+                speakerLabel.text = "听筒"
+            }
+        }
+
+        if (state.startedAt != chronoBase) {
+            chronoBase = state.startedAt
+            duration.base = state.startedAt
+            duration.start()
+        }
+        service?.let { volumeControlStream = it.volumeStream }
+    }
+
+    override fun onLevel(rms: Float) = orb.setLevel(rms)
+
+    override fun onEnded(launches: List<Intent>) {
+        if (closing) return
+        if (launches.isEmpty()) {
+            finishCall()
+            return
+        }
+        closing = true
+        val km = getSystemService(KeyguardManager::class.java)
+        if (km.isKeyguardLocked) {
+            // the app the user asked for would open behind the lock screen
+            km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() = launchAndClose(launches)
+                override fun onDismissCancelled() = launchAndClose(launches)
+                override fun onDismissError() = launchAndClose(launches)
+            })
+        } else {
+            launchAndClose(launches)
+        }
+    }
+
+    private fun launchAndClose(launches: List<Intent>) {
+        for (intent in launches) {
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                Toast.makeText(this, "打开失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+        closing = false
+        finishCall()
+    }
+
+    private fun finishCall() {
+        if (isFinishing) return
+        closing = true
+        duration.stop()
+        finishAndRemoveTask()
+    }
+
+    private fun applyCaptions() {
+        val on = prefs.callCaptions
+        captions.visibility = if (on) View.VISIBLE else View.INVISIBLE
+        captionsToggle.alpha = if (on) 1f else 0.45f
+        captionsToggle.contentDescription = if (on) "隐藏字幕" else "显示字幕"
+    }
+
+    companion object {
+        /** for other apps (QuickBall etc.): `am start -a com.capsopasme.assistant.CALL` */
+        const val ACTION_CALL = "com.capsopasme.assistant.CALL"
+
+        private const val REQ_PERMS = 1
+        private const val REQ_NOTIFICATIONS = 2
+    }
+}

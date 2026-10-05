@@ -10,4 +10,15 @@
     <color name="error">#FFC62828</color>
     <color name="input_bg">#FFF1F1F5</color>
     <color name="launcher_bg">#FF3F5AE0</color>
+
+    <!-- voice call screen -->
+    <color name="call_bg">#FFF4F5FB</color>
+    <color name="call_button">#FFE4E6F2</color>
+    <color name="call_button_on">#FF3F5AE0</color>
+    <color name="call_button_icon">#FF2A2C3A</color>
+    <color name="call_ripple">#333F5AE0</color>
+    <color name="hang_up">#FFE5393B</color>
+    <color name="orb_inner">#FF6E86FF</color>
+    <color name="orb_outer">#FF3F5AE0</color>
+    <color name="orb_idle">#FFB4B8CC</color>
 </resources>

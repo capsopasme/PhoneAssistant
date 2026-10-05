@@ -89,6 +89,15 @@ class AsrService : Service() {
         val partial: Boolean,
         /** force-cut speech longer than this, see [AsrEngine.createVad] */
         val maxSegmentSamples: Int,
+        /** call mode, see [P.KEY_CONTINUOUS] */
+        val continuous: Boolean,
+        /**
+         * a segment at least this long was cut by the VAD's speech length limit (it then splits
+         * at the first short pause), not ended by a real pause
+         */
+        val softCutSamples: Int,
+        /** the pause that ends the turn, see [P.KEY_SILENCE_MS] */
+        val silenceSamples: Int,
     ) {
         val buffer = FloatRingBuffer()
 
@@ -100,6 +109,19 @@ class AsrService : Service() {
         var lastPartialText = ""
         var lastPartialFed = 0
         var lastPartialCost = 0L
+
+        // continuous mode
+        /** text of the pieces cut off so far */
+        var committed = ""
+
+        /** the last piece was cut, not ended: waiting for more speech or for the pause */
+        var awaitingMore = false
+
+        /** silence fed to the VAD since the last cut piece */
+        var silenceAfterCut = 0
+
+        /** the current piece is being force-cut by this service (model window full) */
+        var forcedCut = false
     }
 
     private var session: Session? = null
@@ -144,6 +166,9 @@ class AsrService : Service() {
             msg.arg1, msg.replyTo,
             partial = data.getBoolean(P.KEY_PARTIAL, true),
             maxSegmentSamples = (model.maxSegmentSeconds * P.SAMPLE_RATE).toInt(),
+            continuous = data.getBoolean(P.KEY_CONTINUOUS, false),
+            softCutSamples = ((AsrEngine.vadMaxSpeechSeconds(model) - 1f) * P.SAMPLE_RATE).toInt(),
+            silenceSamples = silenceMs * P.SAMPLE_RATE / 1000,
         )
         reply(msg.replyTo, P.EVT_READY, msg.arg1) {
             putString(P.KEY_BACKEND, engine.backendName)
@@ -164,6 +189,7 @@ class AsrService : Service() {
             s.fed += AsrEngine.VAD_WINDOW
             if (!s.speechStarted && vad.isSpeechDetected()) {
                 s.speechStarted = true
+                s.awaitingMore = false
                 // include ~0.3s before the detected onset
                 s.speechStart = (s.fed - PRE_ROLL).coerceAtLeast(0)
                 s.lastPartialAt = 0L
@@ -172,11 +198,24 @@ class AsrService : Service() {
             }
             if (s.speechStarted && s.fed - s.speechStart >= s.maxSegmentSamples) {
                 // QNN models have a fixed input length and silently truncate anything longer
+                s.forcedCut = true
                 vad.flush()
             }
             if (!vad.empty()) {
-                finishWithSegment(s, engine, vad)
-                return
+                if (!s.continuous) {
+                    finishWithSegment(s, engine, vad)
+                    return
+                }
+                if (!continueWithSegment(s, engine, vad)) return
+                continue
+            }
+            if (s.awaitingMore && !s.speechStarted) {
+                s.silenceAfterCut += AsrEngine.VAD_WINDOW
+                if (s.silenceAfterCut >= s.silenceSamples) {
+                    // the cut piece was the end after all
+                    finishWithText(s, s.committed, 0L)
+                    return
+                }
             }
         }
 
@@ -195,7 +234,8 @@ class AsrService : Service() {
                 s.lastPartialCost = s.lastPartialAt - now
                 if (text.isNotEmpty() && text != s.lastPartialText) {
                     s.lastPartialText = text
-                    reply(s.replyTo, P.EVT_PARTIAL, s.id) { putString(P.KEY_TEXT, text) }
+                    val shown = joinText(s.committed, text)
+                    reply(s.replyTo, P.EVT_PARTIAL, s.id) { putString(P.KEY_TEXT, shown) }
                 }
             }
         } else if (!s.speechStarted && s.fed > KEEP_WHEN_SILENT * 2) {
@@ -215,12 +255,54 @@ class AsrService : Service() {
         val cost = SystemClock.elapsedRealtime() - t0
         // never log the recognized text itself
         Log.d(TAG, "segment ${segment.samples.size} samples -> ${text.length} chars in ${cost}ms")
+        finishWithText(s, joinText(s.committed, text), cost)
+    }
+
+    private fun finishWithText(s: Session, text: String, decodeMs: Long) {
         reply(s.replyTo, P.EVT_FINAL, s.id) {
             putString(P.KEY_TEXT, text)
-            putLong(P.KEY_DECODE_MS, cost)
+            putLong(P.KEY_DECODE_MS, decodeMs)
         }
         reply(s.replyTo, P.EVT_DONE, s.id)
         resetSession()
+    }
+
+    /**
+     * Continuous mode: decode the finished segment. A piece cut because it got too long is kept
+     * and the session goes on (the speaker hasn't paused); a piece ended by a real pause finishes
+     * the turn with everything said.
+     *
+     * @return true if the session goes on
+     */
+    private fun continueWithSegment(s: Session, engine: AsrEngine, vad: Vad): Boolean {
+        val segment = vad.front()
+        vad.pop()
+        val cut = s.forcedCut || segment.samples.size >= s.softCutSamples
+        s.forcedCut = false
+        val t0 = SystemClock.elapsedRealtime()
+        val text = engine.recognize(segment.samples)
+        val cost = SystemClock.elapsedRealtime() - t0
+        Log.d(TAG, "piece ${segment.samples.size} samples (cut=$cut) -> ${text.length} chars in ${cost}ms")
+        if (!cut) {
+            finishWithText(s, joinText(s.committed, text), cost)
+            return false
+        }
+        s.committed = joinText(s.committed, text)
+        // the piece is decoded: its audio is no longer needed for partials
+        s.buffer.dropFront(s.fed)
+        s.fed = 0
+        s.speechStarted = false
+        s.speechStart = 0
+        s.lastPartialAt = 0L
+        s.lastPartialFed = 0
+        s.lastPartialText = ""
+        s.awaitingMore = true
+        s.silenceAfterCut = 0
+        if (s.partial && s.committed.isNotEmpty()) {
+            val shown = s.committed
+            reply(s.replyTo, P.EVT_PARTIAL, s.id) { putString(P.KEY_TEXT, shown) }
+        }
+        return true
     }
 
     private fun stop(id: Int, cancel: Boolean) {
@@ -237,6 +319,10 @@ class AsrService : Service() {
             vad.flush()
             if (!vad.empty()) {
                 finishWithSegment(s, engine, vad)
+                return
+            }
+            if (s.committed.isNotEmpty()) {
+                finishWithText(s, s.committed, 0L)
                 return
             }
         }
@@ -314,6 +400,15 @@ class AsrService : Service() {
             cachedEngine = null
         }
     }
+}
+
+/** Pieces of one utterance: Chinese runs together, Latin words get a space */
+internal fun joinText(a: String, b: String): String {
+    if (a.isEmpty()) return b
+    if (b.isEmpty()) return a
+    val l = a.last()
+    val r = b.first()
+    return if (l.isLetterOrDigit() && l.code < 128 && r.isLetterOrDigit() && r.code < 128) "$a $b" else a + b
 }
 
 /** Growable float buffer with cheap append and drop-from-front */

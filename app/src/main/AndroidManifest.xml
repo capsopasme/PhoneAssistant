@@ -11,6 +11,13 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- voice call: a microphone foreground service that keeps going with the screen off -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- earpiece / Bluetooth headset routing (communication mode) -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- personal app: open any installed app by name -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -19,6 +26,13 @@
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
+
+    <!-- the system TTS engine (MOSS-TTS-Nano) for the voice call -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -36,6 +50,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- long-press the icon: "语音通话" -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!--
@@ -65,6 +83,31 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!--
+          The voice call screen: its own task, shown over the lock screen (like an incoming-call
+          screen), gone from recents when the call ends.
+        -->
+        <activity
+            android:name=".call.CallActivity"
+            android:autoRemoveFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:taskAffinity=".call"
+            android:theme="@style/Theme.Call"
+            android:windowSoftInputMode="stateAlwaysHidden">
+            <intent-filter>
+                <action android:name="com.capsopasme.assistant.CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- the voice call itself: listen / think / speak, also with the screen off -->
+        <service
+            android:name=".call.CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!--
           Offline recognizer (sherpa-onnx + Qualcomm QNN), isolated in its own process:

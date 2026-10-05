@@ -31,6 +31,12 @@ object AsrProtocol {
     const val KEY_PARTIAL = "partial"
     const val KEY_SILENCE_MS = "silence_ms"
     const val KEY_KEEP_LOADED = "keep_loaded"
+
+    /**
+     * Call mode: speech longer than the model window (cut by the VAD / the service) doesn't end
+     * the session; the pieces are joined and only a real pause sends [EVT_FINAL]
+     */
+    const val KEY_CONTINUOUS = "continuous"
     const val KEY_PCM = "pcm"
     const val KEY_TEXT = "text"
     const val KEY_MESSAGE = "message"

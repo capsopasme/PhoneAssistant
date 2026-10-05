@@ -62,4 +62,30 @@
         <item name="android:layout_weight">1</item>
         <item name="android:textSize">14sp</item>
     </style>
+
+    <!-- call screen: a round button with its label below -->
+    <style name="CallAction">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center_horizontal|bottom</item>
+        <item name="android:orientation">vertical</item>
+    </style>
+
+    <style name="CallButton">
+        <item name="android:layout_width">60dp</item>
+        <item name="android:layout_height">60dp</item>
+        <item name="android:background">@drawable/bg_call_button</item>
+        <item name="android:padding">17dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:tint">@color/call_icon_tint</item>
+    </style>
+
+    <style name="CallLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">13sp</item>
+    </style>
 </resources>

@@ -80,6 +80,37 @@ class Prefs(context: Context) {
         get() = sp.getString("mirror_prefix", "") ?: ""
         set(v) = sp.edit().putString("mirror_prefix", v.trim()).apply()
 
+    // ---------------------------------------------------------------------------------------------
+    // voice call
+
+    /** silence that ends what the user says in a call (people pause longer when talking) */
+    var callSilenceMs: Int
+        get() = sp.getInt("call_silence_ms", 800)
+        set(v) = sp.edit().putInt("call_silence_ms", v).apply()
+
+    /** hang up after this long without anyone speaking; 0 = never */
+    var callIdleSeconds: Int
+        get() = sp.getInt("call_idle_s", 60)
+        set(v) = sp.edit().putInt("call_idle_s", v).apply()
+
+    /** a short tone when it's the user's turn, while the call screen isn't in view */
+    var callCue: Boolean
+        get() = sp.getBoolean("call_cue", true)
+        set(v) = sp.edit().putBoolean("call_cue", v).apply()
+
+    /**
+     * with a Bluetooth headset connected, talk through its microphone (call audio, like a phone
+     * call) instead of the phone's microphone with media-quality playback
+     */
+    var callHeadsetMic: Boolean
+        get() = sp.getBoolean("call_headset_mic", false)
+        set(v) = sp.edit().putBoolean("call_headset_mic", v).apply()
+
+    /** show what both sides said on the call screen */
+    var callCaptions: Boolean
+        get() = sp.getBoolean("call_captions", true)
+        set(v) = sp.edit().putBoolean("call_captions", v).apply()
+
     companion object {
         const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
         const val DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"

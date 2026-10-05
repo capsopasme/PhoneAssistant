@@ -13,6 +13,18 @@
         <item name="android:colorAccent">@color/accent</item>
     </style>
 
+    <!-- full-screen voice call, over the lock screen too -->
+    <style name="Theme.Call" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@color/call_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">@bool/light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/light_system_bars</item>
+        <item name="android:colorAccent">@color/accent</item>
+    </style>
+
     <style name="Theme.Settings" parent="android:Theme.DeviceDefault.DayNight">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>

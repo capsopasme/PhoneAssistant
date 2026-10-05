@@ -5,8 +5,10 @@ import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.os.Bundle
 import android.provider.Settings
+import android.speech.tts.TextToSpeech
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
@@ -42,8 +44,14 @@ class SettingsActivity : Activity() {
     private lateinit var mirror: EditText
     private lateinit var silence: EditText
     private lateinit var keepLoaded: Switch
+    private lateinit var ttsStatus: TextView
+    private lateinit var callSilence: EditText
+    private lateinit var callIdle: EditText
+    private lateinit var callCue: Switch
+    private lateinit var callHeadsetMic: Switch
 
     private var testClient: AsrClient? = null
+    private var testTts: TextToSpeech? = null
 
     private val selectedModel get() = prefs.speechModel
 
@@ -73,6 +81,11 @@ class SettingsActivity : Activity() {
         mirror = findViewById(R.id.mirror)
         silence = findViewById(R.id.silence)
         keepLoaded = findViewById(R.id.keepLoaded)
+        ttsStatus = findViewById(R.id.ttsStatus)
+        callSilence = findViewById(R.id.callSilence)
+        callIdle = findViewById(R.id.callIdle)
+        callCue = findViewById(R.id.callCue)
+        callHeadsetMic = findViewById(R.id.callHeadsetMic)
 
         deepseekKey.setText(prefs.deepseekKey)
         deepseekModel.setText(prefs.deepseekModel.takeIf { it != Prefs.DEFAULT_DEEPSEEK_MODEL } ?: "")
@@ -84,6 +97,10 @@ class SettingsActivity : Activity() {
         mirror.setText(prefs.mirrorPrefix)
         silence.setText(prefs.silenceMs.toString())
         keepLoaded.isChecked = prefs.keepModelLoaded
+        callSilence.setText(prefs.callSilenceMs.toString())
+        callIdle.setText(prefs.callIdleSeconds.toString())
+        callCue.isChecked = prefs.callCue
+        callHeadsetMic.isChecked = prefs.callHeadsetMic
 
         val llmGroup = findViewById<RadioGroup>(R.id.llmGroup)
         LlmClient.Kind.entries.forEach { k ->
@@ -150,6 +167,15 @@ class SettingsActivity : Activity() {
         }
         findViewById<Button>(R.id.modelTest).setOnClickListener { selfTest() }
 
+        findViewById<Button>(R.id.ttsSettings).setOnClickListener {
+            try {
+                startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
+        }
+        findViewById<Button>(R.id.ttsTest).setOnClickListener { testSpeech() }
+
         findViewById<Button>(R.id.permRequest).setOnClickListener {
             requestPermissions(PERMISSIONS, REQ_PERMS)
         }
@@ -168,6 +194,7 @@ class SettingsActivity : Activity() {
         renderRole()
         renderPerms()
         renderModel()
+        renderTts()
     }
 
     override fun onPause() {
@@ -183,11 +210,17 @@ class SettingsActivity : Activity() {
         prefs.mirrorPrefix = mirror.text.toString()
         prefs.silenceMs = (silence.text.toString().toIntOrNull() ?: 700).coerceIn(300, 2000)
         prefs.keepModelLoaded = keepLoaded.isChecked
+        prefs.callSilenceMs = (callSilence.text.toString().toIntOrNull() ?: 800).coerceIn(300, 2000)
+        prefs.callIdleSeconds = (callIdle.text.toString().toIntOrNull() ?: 60).coerceIn(0, 3600)
+        prefs.callCue = callCue.isChecked
+        prefs.callHeadsetMic = callHeadsetMic.isChecked
     }
 
     override fun onDestroy() {
         testClient?.unbind()
         testClient = null
+        testTts?.shutdown()
+        testTts = null
         super.onDestroy()
     }
 
@@ -211,6 +244,44 @@ class SettingsActivity : Activity() {
             mark(Manifest.permission.CALL_PHONE, "电话"),
             mark(Manifest.permission.READ_MEDIA_AUDIO, "音乐"),
         ).joinToString("   ")
+    }
+
+    /** the preferred TTS engine, which the voice call speaks with */
+    private fun renderTts() {
+        @Suppress("DEPRECATION")
+        val pkg = Settings.Secure.getString(contentResolver, Settings.Secure.TTS_DEFAULT_SYNTH)
+        val label = pkg?.let {
+            try {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)).toString()
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
+        ttsStatus.text = when {
+            label == null -> "没读到首选引擎，通话会用系统默认的 TTS"
+            pkg == MOSS_PACKAGE -> "✓ $label（离线流式朗读）"
+            else -> "$label（建议在系统 TTS 设置里把首选引擎设为 MOSS-TTS-Nano）"
+        }
+    }
+
+    private fun testSpeech() {
+        testTts?.shutdown()
+        var tts: TextToSpeech? = null
+        tts = TextToSpeech(this) { status ->
+            val t = tts ?: return@TextToSpeech
+            if (status != TextToSpeech.SUCCESS) {
+                toast("语音合成引擎初始化失败")
+                return@TextToSpeech
+            }
+            t.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            t.speak("你好，语音通话时我会用这个声音回答你。", TextToSpeech.QUEUE_FLUSH, null, "test")
+        }
+        testTts = tts
     }
 
     private fun renderModel() {
@@ -284,6 +355,7 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
+        private const val MOSS_PACKAGE = "io.github.capsopasme.mossnano"
         private const val REQ_IMPORT = 10
         private const val REQ_PERMS = 11
         private val PERMISSIONS = arrayOf(

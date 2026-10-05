@@ -34,6 +34,17 @@
                 android:layout_weight="1"
                 android:textColor="@color/accent"
                 android:textSize="13sp" />
+
+            <!-- switch to the voice call -->
+            <ImageButton
+                android:id="@+id/callButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/bg_round_button"
+                android:contentDescription="语音通话"
+                android:padding="7dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_call" />
         </LinearLayout>
 
         <TextView

@@ -41,8 +41,13 @@ class AudioCapture(
 
     val isRunning get() = current?.running == true
 
+    /**
+     * @param source VOICE_RECOGNITION (default, raw-ish audio for the recognizer) or
+     * VOICE_COMMUNICATION (call mode on the earpiece / a Bluetooth headset: follows the
+     * communication device, with the platform's echo canceller)
+     */
     @SuppressLint("MissingPermission")
-    fun start(context: Context): Boolean {
+    fun start(context: Context, source: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION): Boolean {
         if (isRunning) return true
         if (!hasPermission(context)) return false
         val rate = AsrProtocol.SAMPLE_RATE
@@ -55,7 +60,7 @@ class AudioCapture(
         }
         val record = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                source,
                 rate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,

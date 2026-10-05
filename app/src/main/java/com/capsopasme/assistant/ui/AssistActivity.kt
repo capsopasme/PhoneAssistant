@@ -32,9 +32,13 @@ import android.window.OnBackInvokedDispatcher
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.R
 import com.capsopasme.assistant.agent.Agent
+import com.capsopasme.assistant.agent.ToolLabels
 import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.AudioCapture
 import com.capsopasme.assistant.asr.ModelManager
+import com.capsopasme.assistant.call.CallActivity
+import com.capsopasme.assistant.call.CallService
+import com.capsopasme.assistant.call.VoiceReplies
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -80,6 +84,9 @@ class AssistActivity : Activity() {
 
     /** the exit animation is running: the sheet finishes when it ends */
     private var dismissing = false
+
+    /** became the voice call: keep music paused until the call holds the audio focus */
+    private var handedOverToCall = false
     private var scrimAnimator: ValueAnimator? = null
     private var statusPulse: ObjectAnimator? = null
     private var heardSomething = false
@@ -173,6 +180,13 @@ class AssistActivity : Activity() {
         // no window animation: the sheet slides itself in and out (see playEnter / dismiss)
         overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        if (CallService.running) {
+            // a voice call is going on: its microphone is busy, show the call instead
+            destroyed = true
+            startActivity(Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            finish()
+            return
+        }
         setContentView(R.layout.activity_assist)
         prefs = Prefs(this)
         asr = AsrClient(this, asrListener)
@@ -233,6 +247,7 @@ class AssistActivity : Activity() {
                 send.visibility = View.VISIBLE
             }
         }
+        findViewById<View>(R.id.callButton).setOnClickListener { startCall() }
         findViewById<Button>(R.id.confirmYes).setOnClickListener { answerConfirm(true) }
         findViewById<Button>(R.id.confirmNo).setOnClickListener { answerConfirm(false) }
 
@@ -242,7 +257,7 @@ class AssistActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (dismissing) return
+        if (dismissing || !::asr.isInitialized) return
         // invoked again while open: start over
         silencer.engage()
         agent?.cancel()
@@ -265,8 +280,20 @@ class AssistActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (!::asr.isInitialized) {
+            // handed over to a running call in onCreate
+            super.onDestroy()
+            return
+        }
         destroyed = true
-        silencer.release()
+        if (handedOverToCall) {
+            // the call takes the audio focus as it starts; giving ours back first would let
+            // paused music play for a moment
+            val s = silencer
+            Handler(Looper.getMainLooper()).postDelayed({ s.release() }, HANDOVER_MS)
+        } else {
+            silencer.release()
+        }
         statusPulse?.cancel()
         scrimAnimator?.cancel()
         main.removeCallbacksAndMessages(null)
@@ -364,7 +391,23 @@ class AssistActivity : Activity() {
         ask(text)
     }
 
+    /** the sheet becomes the voice call (the call button, or "进入通话模式" / "陪我聊聊") */
+    private fun startCall() {
+        if (dismissing || isFinishing) return
+        if (phase == Phase.Listening) stopListening(cancel = true)
+        agent?.cancel()
+        answerConfirm(false)
+        handedOverToCall = true
+        startActivity(Intent(this, CallActivity::class.java).setAction(CallActivity.ACTION_CALL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // no slide-out: the call screen covers the sheet; the call takes over the audio focus
+        finish()
+    }
+
     private fun ask(question: String) {
+        if (VoiceReplies.isStartCall(question)) {
+            startCall()
+            return
+        }
         main.removeCallbacks(autoClose)
         phase = Phase.Thinking
         status.text = "正在思考…"
@@ -395,7 +438,7 @@ class AssistActivity : Activity() {
                 // text streamed before a tool call is a preamble; the final answer replaces it
                 answer.text = ""
                 answer.visibility = View.GONE
-                status.text = TOOL_LABELS[name]?.let { "正在$it…" } ?: "正在执行…"
+                status.text = ToolLabels.status(name)
             }
 
             override fun onFinished(text: String, launches: List<Intent>, acted: Boolean) = live {
@@ -465,7 +508,7 @@ class AssistActivity : Activity() {
             return answered && confirmAnswer && !destroyed
         }
 
-        override fun startNow(intent: Intent) {
+        override fun startNow(intent: Intent): Boolean {
             val latch = CountDownLatch(1)
             ui {
                 try {
@@ -478,6 +521,7 @@ class AssistActivity : Activity() {
                 latch.await(3, TimeUnit.SECONDS)
             } catch (_: InterruptedException) {
             }
+            return true
         }
     }
 
@@ -657,6 +701,7 @@ class AssistActivity : Activity() {
         const val ACTION_START = "com.capsopasme.assistant.START"
 
         private const val REQ_MIC = 1
+        private const val HANDOVER_MS = 1_500L
         private const val NO_SPEECH_MS = 7_000L
         private const val FOLLOW_UP_NO_SPEECH_MS = 8_000L
         private const val MAX_LISTEN_MS = 25_000L
@@ -674,28 +719,5 @@ class AssistActivity : Activity() {
         /** Material 3 emphasized easing */
         private val EMPHASIZED_DECELERATE = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
         private val EMPHASIZED_ACCELERATE = PathInterpolator(0.3f, 0f, 0.8f, 0.15f)
-
-        private val TOOL_LABELS = mapOf(
-            "set_alarm" to "设闹钟",
-            "set_timer" to "设倒计时",
-            "show_alarms" to "打开闹钟",
-            "add_calendar_event" to "新建日程",
-            "find_contact" to "查通讯录",
-            "call_phone" to "拨号",
-            "compose_sms" to "写短信",
-            "navigate" to "打开导航",
-            "open_app" to "打开应用",
-            "web_search" to "搜索",
-            "get_weather" to "查天气",
-            "play_music" to "播放音乐",
-            "media_control" to "控制播放",
-            "set_volume" to "调音量",
-            "set_ringer_mode" to "切换铃声",
-            "flashlight" to "开关手电筒",
-            "set_brightness" to "调亮度",
-            "toggle_setting" to "切换开关",
-            "screen_off" to "锁屏",
-            "get_device_status" to "查询状态",
-        )
     }
 }

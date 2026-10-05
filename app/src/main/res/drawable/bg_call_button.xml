@@ -1,0 +1,12 @@
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/call_ripple">
+    <item>
+        <selector>
+            <item android:state_activated="true">
+                <shape android:shape="oval"><solid android:color="@color/call_button_on" /></shape>
+            </item>
+            <item>
+                <shape android:shape="oval"><solid android:color="@color/call_button" /></shape>
+            </item>
+        </selector>
+    </item>
+</ripple>

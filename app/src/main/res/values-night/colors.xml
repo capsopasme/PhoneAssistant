@@ -9,4 +9,14 @@
     <color name="accent_soft">#299AABFF</color>
     <color name="error">#FFFF8A80</color>
     <color name="input_bg">#FF2B2B31</color>
+
+    <color name="call_bg">#FF111216</color>
+    <color name="call_button">#FF262833</color>
+    <color name="call_button_on">#FF9AABFF</color>
+    <color name="call_button_icon">#FFE6E5EB</color>
+    <color name="call_ripple">#409AABFF</color>
+    <color name="hang_up">#FFE5393B</color>
+    <color name="orb_inner">#FFA9B7FF</color>
+    <color name="orb_outer">#FF4F63D6</color>
+    <color name="orb_idle">#FF4A4C5A</color>
 </resources>
