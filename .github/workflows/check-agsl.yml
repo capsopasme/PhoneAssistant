@@ -1,0 +1,19 @@
+name: Check AGSL (temporary)
+on:
+  push:
+    branches: [agsl-check]
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install skia-python numpy
+      - run: python .github/agsl/check_agsl.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: agsl-frames
+          path: agsl_frames.png
