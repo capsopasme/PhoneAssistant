@@ -25,6 +25,7 @@ import com.capsopasme.assistant.agent.RootShell
 import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.asr.SpeechModel
+import com.capsopasme.assistant.call.CallService
 import com.capsopasme.assistant.llm.LlmClient
 
 class SettingsActivity : Activity() {
@@ -309,6 +310,11 @@ class SettingsActivity : Activity() {
     }
 
     private fun selfTest() {
+        if (CallService.running) {
+            // the recognizer serves one session at a time: the test would cut the call off
+            toast("语音通话进行中，挂断后再测试")
+            return
+        }
         val model = selectedModel
         if (!ModelManager.isInstalled(this, model)) {
             toast("先安装模型")

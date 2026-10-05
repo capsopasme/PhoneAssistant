@@ -273,13 +273,7 @@ class CallService : Service() {
     }
 
     /** started again while running (startForegroundService expects startForeground every time) */
-    private fun refreshForeground() {
-        try {
-            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } catch (e: Exception) {
-            Log.w(TAG, "startForeground again failed", e)
-        }
-    }
+    private fun refreshForeground() = updateNotification()
 
     // ---------------------------------------------------------------------------------------------
     // the call screen
@@ -1122,9 +1116,22 @@ class CallService : Service() {
         }
     }
 
+    /**
+     * Re-posted through startForeground: a CallStyle notification must belong to the foreground
+     * service, a plain notify() of it can be refused.
+     */
     private fun updateNotification() {
         if (ended || !started) return
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        val n = buildNotification()
+        try {
+            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } catch (e: Exception) {
+            try {
+                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, n)
+            } catch (e2: Exception) {
+                Log.w(TAG, "notification update failed", e2)
+            }
+        }
     }
 
     companion object {
