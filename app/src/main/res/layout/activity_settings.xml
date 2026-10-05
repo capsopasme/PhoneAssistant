@@ -30,7 +30,7 @@
             android:layout_marginTop="16dp"
             android:background="@drawable/bg_call_entry"
             android:clickable="true"
-            android:contentDescription="开始语音通话"
+            android:contentDescription="和噜噜通话"
             android:focusable="true"
             android:gravity="center_vertical"
             android:orientation="horizontal"
@@ -56,7 +56,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="语音通话"
+                    android:text="和噜噜通话"
                     android:textColor="@color/text_primary"
                     android:textSize="17sp"
                     android:textStyle="bold" />
@@ -66,7 +66,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="像打电话一样陪你聊天"
+                    android:text="肥嘟嘟的噜噜，随时陪你聊"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
             </LinearLayout>
@@ -217,11 +217,11 @@
             android:text="保留时识别进程会被系统冻结在后台缓存里，不占 CPU、不耗电，内存紧张时系统会自动回收；下次唤起不用重新加载。关闭则每次用完立即释放。" />
 
         <!-- voice call -->
-        <TextView style="@style/SectionTitle" android:text="语音通话" />
+        <TextView style="@style/SectionTitle" android:text="噜噜（语音通话）" />
 
         <TextView
             style="@style/Hint"
-            android:text="像打电话一样和一个温和耐心的聊天伙伴连续聊天：它说完你接着说，回答简短，能帮你上网查最新消息，但不操作手机（设闹钟、开关这些请用语音助手卡片）。\n进入：本页顶部的“语音通话”、卡片右上角的电话按钮、在卡片里说“进入通话模式”或“陪我聊聊”、长按桌面图标选“语音通话”；QuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.CALL。\n退出：说“退出通话”“挂了吧”“拜拜”“晚安”，说“切回助手”会挂断并打开助手卡片。熄屏照常进行，很久没人说话或来电时自动结束。" />
+            android:text="像打电话一样和噜噜连续聊天：一只肥嘟嘟的小猪，情绪超稳定，懂你的感受，也能答疑解惑、帮你上网查最新消息，但不操作手机（设闹钟、开关这些请用语音助手卡片）。\n进入：本页顶部的“和噜噜通话”、卡片右上角的电话按钮、在卡片里说“噜噜”“叫噜噜来”“陪我聊聊”或“进入通话模式”、长按桌面图标；QuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.CALL。\n退出：说“退出通话”“挂了吧”“拜拜”“晚安”，说“切回助手”会挂断并打开助手卡片。熄屏照常进行，很久没人说话或来电时自动结束。" />
 
         <TextView style="@style/Label" android:text="朗读用的语音合成（系统首选 TTS 引擎）" />
 
@@ -277,6 +277,50 @@
         <TextView
             style="@style/Hint"
             android:text="打开：像打电话一样走蓝牙通话通道，手机放口袋里也听得清你说话，但朗读变成通话音质。关闭：朗读以高音质走耳机，用手机自己的麦克风听你说话。" />
+
+        <!-- memory -->
+        <Switch
+            android:id="@+id/memoryEnabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="噜噜记住聊过的事（无感记忆）"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="每次挂断后，联网时用上面选的大模型把这次通话整理成几条关于你的记忆和一句摘要；下次通话噜噜会自然地记得，偶尔主动问问你之前说过的事。说“记住…”当场记，说“忘掉…”当场删。只存在手机里，不记密码、验证码、证件号和银行卡号。关闭后不再记录，已有的记忆可以在下面清空。" />
+
+        <TextView
+            android:id="@+id/memoryStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/memoryManage"
+                style="@style/RowButton"
+                android:text="查看和管理" />
+            <Button
+                android:id="@+id/memoryClear"
+                style="@style/RowButton"
+                android:text="全部清空" />
+        </LinearLayout>
+
+        <!-- looks -->
+        <TextView style="@style/SectionTitle" android:text="特效" />
+
+        <Switch
+            android:id="@+id/timeStopFx"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="时停特效（进出助手卡片和通话）"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="唤出助手或开始通话时，一下重震，一个反相的球从中心炸开，扫过之后整个屏幕定格、褪色，时间像停住了一样；关闭卡片或挂断时反向恢复。需要 root 截一张当前屏幕（只在内存里，用完即丢，不保存）；禁止截屏的应用里换成简化版。只震动，不出声；开麦不等动画，张嘴就能说。" />
 
         <!-- permissions -->
         <TextView style="@style/SectionTitle" android:text="权限" />

@@ -26,6 +26,8 @@ import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.AudioCapture
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.asr.joinText
+import com.capsopasme.assistant.memory.MemoryJobService
+import com.capsopasme.assistant.memory.MemoryStore
 import com.capsopasme.assistant.ui.AssistActivity
 import com.capsopasme.assistant.ui.MediaSilencer
 import java.util.concurrent.CountDownLatch
@@ -34,8 +36,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The voice call: a turn-taking (half-duplex) conversation with a chat companion (warm, patient,
- * short answers; it can search the web but doesn't operate the phone, see [Agent.Mode.Companion]).
+ * The voice call: a turn-taking (half-duplex) conversation with 噜噜, a chat companion (warm,
+ * unflappable, short answers; it can search the web but doesn't operate the phone, see
+ * [Agent.Mode.Companion]). With memory on, what was said is handed to [MemoryStore] when the call
+ * ends and distilled later by [MemoryJobService].
  * Listen until the user pauses, ask the model, speak the answer through the system TTS engine
  * sentence by sentence as it streams in, then listen again. The microphone is closed while the answer plays, so the assistant never
  * hears itself; tapping interrupts it.
@@ -114,6 +118,15 @@ class CallService : Service() {
     private var ended = false
     private var released = false
     private var startedAt = 0L
+
+    /** wall clock of the start, for the memory */
+    private var startedWall = 0L
+
+    /** memory on for this call (read once at its start) */
+    private var memoryOn = false
+
+    /** (what the user said, what 噜噜 answered) of each finished turn, for the memory */
+    private val transcript = ArrayList<Pair<String, String>>()
     private var phase = Phase.Starting
     private var muted = false
 
@@ -250,6 +263,10 @@ class CallService : Service() {
         started = true
         inCall = true
         startedAt = SystemClock.elapsedRealtime()
+        startedWall = System.currentTimeMillis()
+        memoryOn = prefs.memoryEnabled
+        // an earlier call not distilled yet (no network then): now, so this call can know it
+        if (memoryOn && MemoryStore.pendingFiles(this).isNotEmpty()) MemoryJobService.schedule(this)
         // first: a foreground service that doesn't call this in time gets the app killed
         try {
             startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -477,13 +494,13 @@ class CallService : Service() {
     }
 
     private val idleTimeout = Runnable {
-        if (phase == Phase.Listening || phase == Phase.Paused) goodbye("好久没听到你说话，我先挂了，有事再叫我。")
+        if (phase == Phase.Listening || phase == Phase.Paused) goodbye("好久没听到你说话啦，噜噜先挂了，想聊随时叫我。")
     }
 
     /** someone talking without end (a TV): take what was said */
     private val maxTurnTimeout = Runnable { if (capturing) asr.stop() }
 
-    private val maxCallTimeout = Runnable { goodbye("通话时间太长了，我先挂了。") }
+    private val maxCallTimeout = Runnable { goodbye("我们聊了好久啦，噜噜先挂了，休息一下再来找我吧。") }
 
     /** the "your turn" tone only when nobody is looking at the animated screen */
     private fun cueWanted() = prefs.callCue && (!uiVisible || !power.isInteractive)
@@ -596,7 +613,7 @@ class CallService : Service() {
             return
         }
         if (CallCommands.isEnter(full)) {
-            sayAndListen("我们已经在通话啦，想聊什么都可以。")
+            sayAndListen("噜噜在呢，我们已经在通话啦，想聊什么都行。")
             return
         }
         startTurn(full)
@@ -756,6 +773,7 @@ class CallService : Service() {
         t.endCall = endCall
         closeContinuation()
         if (answer.isBlank()) answer = text.ifBlank { "好的" }
+        if (memoryOn) transcript.add(t.question to answer)
         if (!t.silent) {
             t.chunker.flush()?.let { speakFor(t, it) }
             if (!t.spoke) {
@@ -1039,6 +1057,11 @@ class CallService : Service() {
         worker?.shutdownNow()
         worker = null
         speaker.shutdown()
+        if (memoryOn && transcript.isNotEmpty()) {
+            MemoryStore.savePending(this, startedWall, transcript)
+            MemoryJobService.schedule(this)
+            transcript.clear()
+        }
 
         // a phone call goes through Telecom; the rest needs an activity start
         val rest = launches.filterNot { Launcher.placeCallIfCall(this, it) }
@@ -1130,7 +1153,7 @@ class CallService : Service() {
         ).build()
         fun base() = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_call)
-            .setContentTitle("语音通话中")
+            .setContentTitle("和噜噜通话中")
             .setContentText(if (muted) "麦克风已关闭" else "点按回到通话")
             .setContentIntent(open)
             .setOngoing(true)
@@ -1143,7 +1166,7 @@ class CallService : Service() {
             base()
                 .setCategory(Notification.CATEGORY_CALL)
                 .setStyle(Notification.CallStyle.forOngoingCall(
-                    Person.Builder().setName(getString(R.string.app_name)).setImportant(true).build(), hangUp,
+                    Person.Builder().setName(LULU).setImportant(true).build(), hangUp,
                 ))
                 .addAction(muteAction)
                 .build()
@@ -1176,6 +1199,7 @@ class CallService : Service() {
 
     companion object {
         private const val TAG = "CallService"
+        private const val LULU = "噜噜"
         private const val CHANNEL = "call"
         private const val NOTIFICATION_ID = 7
 

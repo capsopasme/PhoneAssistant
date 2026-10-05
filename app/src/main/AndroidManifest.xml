@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- earpiece / Bluetooth headset routing (communication mode) -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- the time-stop effect's thud -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- personal app: open any installed app by name -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -102,6 +104,17 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- what 噜噜 remembers: view and delete -->
+        <activity
+            android:name=".ui.MemoryActivity"
+            android:exported="false" />
+
+        <!-- distills finished calls into 噜噜's memory once there is a network -->
+        <service
+            android:name=".memory.MemoryJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- the voice call itself: listen / think / speak, also with the screen off -->
         <service

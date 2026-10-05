@@ -20,6 +20,7 @@ import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.view.KeyEvent
 import com.capsopasme.assistant.Prefs
+import com.capsopasme.assistant.memory.MemoryStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -92,6 +93,9 @@ class Tools(private val ctx: Context, private val host: Host) {
                 "screen_off" -> rootAction("input keyevent 223", "已锁屏")
                 "get_device_status" -> deviceStatus()
                 "hang_up" -> if (host.endCall()) ok("说完这句回复后通话会结束") else err("现在不在通话中")
+                "remember" -> remember(a)
+                "forget_memory" -> forgetMemory(a)
+                "recall_memory" -> recallMemory(a)
                 else -> err("没有这个工具：$name")
             }
         } catch (e: SecurityException) {
@@ -772,6 +776,36 @@ class Tools(private val ctx: Context, private val host: Host) {
         return ok("已打开$what")
     }
 
+    // --------------------------------------------------------------------------------------------
+    // 噜噜's memory (voice call)
+
+    private fun remember(a: JSONObject): String {
+        if (!prefs.memoryEnabled) return err("记忆功能已在设置里关闭")
+        val text = a.optString("text").trim()
+        if (text.isEmpty()) return err("没有要记的内容")
+        MemoryStore.addFact(ctx, text)
+        return ok("记住了")
+    }
+
+    private fun forgetMemory(a: JSONObject): String {
+        if (!prefs.memoryEnabled) return err("记忆功能已在设置里关闭")
+        val ids = HashSet<Int>()
+        a.optJSONArray("ids")?.let { arr -> for (i in 0 until arr.length()) arr.optInt(i, -1).takeIf { it >= 0 }?.let(ids::add) }
+        val about = a.optString("about").trim()
+        if (ids.isEmpty() && about.isNotEmpty()) MemoryStore.findFacts(ctx, about).forEach { ids.add(it.id) }
+        if (ids.isEmpty()) return err("没找到相关的记忆")
+        val gone = MemoryStore.removeFacts(ctx, ids)
+        if (gone.isEmpty()) return err("没找到相关的记忆")
+        return ok(JSONObject().put("forgotten", JSONArray(gone)).put("note", "已经删掉了，简短告诉对方忘掉了就好"))
+    }
+
+    private fun recallMemory(a: JSONObject): String {
+        if (!prefs.memoryEnabled) return err("记忆功能已在设置里关闭")
+        val found = MemoryStore.search(ctx, a.optString("query"), ZoneId.systemDefault())
+        if (found.isEmpty()) return ok("没有找到相关的记忆")
+        return ok(JSONArray(found))
+    }
+
     private fun ok(result: Any) = JSONObject().put("ok", true).put("result", result).toString()
     private fun err(message: String) = JSONObject().put("ok", false).put("error", message).toString()
 
@@ -786,11 +820,33 @@ class Tools(private val ctx: Context, private val host: Host) {
         private const val MUSIC_MIN_SCORE = 0.6
         private const val ALREADY = "__ALREADY__"
 
-        /** the tools of the assistant sheet, or of the call companion (chat only, see [companionSchemas]) */
-        fun schemasFor(companion: Boolean): JSONArray = if (companion) companionSchemas else schemas
+        /**
+         * the tools of the assistant sheet, or of the call companion (chat only, see
+         * [companionSchemas]); [memory]: 噜噜's memory tools too
+         */
+        fun schemasFor(companion: Boolean, memory: Boolean = false): JSONArray = when {
+            !companion -> schemas
+            memory -> companionMemorySchemas
+            else -> companionSchemas
+        }
 
-        /** what the call companion may do: look things up and end the call, never operate the phone */
-        val COMPANION_TOOLS = setOf("search_web", "read_webpage", "get_weather", "hang_up")
+        /** what the call companion may do: look things up, remember, end the call; never operate the phone */
+        val COMPANION_TOOLS = setOf("search_web", "read_webpage", "get_weather", "hang_up", "remember", "forget_memory", "recall_memory")
+
+        private val companionMemorySchemas: JSONArray by lazy {
+            JSONArray(companionSchemas.toString()).apply {
+                fn("remember", "马上记住关于对方的一件事。只在对方明确让你“记住”时用；平时聊到的事通话结束后会自动整理，不用调用",
+                    props("text" to str("要记的事，一句话，以“用户”开头，如“用户的生日是3月5日”")), "text")
+                fn("forget_memory", "删掉记忆。对方让你“忘掉”“别记着”某件事时用；优先按编号删",
+                    props(
+                        "ids" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "integer"))
+                            .put("description", "要删的记忆编号（系统提示里方括号中的数字）"),
+                        "about" to str("没有对应编号时，要忘掉的事的关键词"),
+                    ))
+                fn("recall_memory", "翻以前的通话记忆：对方提到很久以前聊过的事、而系统提示里没写到时用",
+                    props("query" to str("要找的事的关键词")), "query")
+            }
+        }
 
         private val companionSchemas: JSONArray by lazy {
             JSONArray().apply {

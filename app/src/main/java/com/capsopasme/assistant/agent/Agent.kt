@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.llm.LlmClient
+import com.capsopasme.assistant.memory.MemoryStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.ZonedDateTime
@@ -13,8 +14,9 @@ import java.util.Locale
 
 /**
  * The tool-calling loop for one assistant session (one sheet opening, or one voice call).
- * Keeps the conversation in memory for follow-up questions in the same session only; nothing
- * is persisted.
+ * Keeps the conversation in memory for follow-up questions in the same session only. The voice
+ * call's 噜噜 also gets what it remembers from earlier calls ([MemoryStore]); the call itself is
+ * handed to the memory by [com.capsopasme.assistant.call.CallService] when it ends.
  *
  * [ask] blocks: run it on a worker thread. Listener callbacks come from that thread.
  *
@@ -31,9 +33,10 @@ class Agent(
         Assistant,
 
         /**
-         * the voice call: a warm, patient chat partner (like 豆包's call) whose answers are read
-         * aloud. It can search the web and check the weather, and hang up; it doesn't operate the
-         * phone, and "打开 xx" / "关掉蓝牙" aren't run locally either.
+         * the voice call: 噜噜, a chubby little pig and warm, unflappable chat partner (like 豆包's
+         * call) whose answers are read aloud. It can search the web, check the weather, remember
+         * and hang up; it doesn't operate the phone, and "打开 xx" / "关掉蓝牙" aren't run locally
+         * either.
          */
         Companion,
     }
@@ -70,6 +73,12 @@ class Agent(
 
     /** read once per session: the model selected in the settings, never switched mid-way */
     private val provider: LlmClient.Provider? = prefs.currentProvider()
+
+    /** 噜噜 remembers earlier calls (read once per call) */
+    private val memoryOn = isCompanion && prefs.memoryEnabled
+
+    /** the memory the system prompt was written with; it's rewritten when the memory changed */
+    private var memoryVersion = -1
 
     private val tools = Tools(context, object : Tools.Host {
         override fun confirm(question: String) = ui.confirm(question)
@@ -163,7 +172,7 @@ class Agent(
         val okResults = ArrayList<String>()
         try {
             repeat(MAX_ROUNDS) {
-                val reply = client.chat(provider, messages, Tools.schemasFor(isCompanion)) { delta -> listener.onText(delta) }
+                val reply = client.chat(provider, messages, Tools.schemasFor(isCompanion, memoryOn)) { delta -> listener.onText(delta) }
                 if (client.cancelled) {
                     rollback(userIndex)
                     return
@@ -246,11 +255,14 @@ class Agent(
         for (i in cut - 1 downTo 1) messages.remove(i)
     }
 
-    /** the clock in the system prompt, rewritten when the minute changed (long calls) */
+    /**
+     * the clock in the system prompt, rewritten when the minute changed (long calls), and the
+     * memory, when the last call was distilled or something was remembered / forgotten meanwhile
+     */
     private fun refreshClock() {
         val now = ZonedDateTime.now()
         val minute = now.format(MINUTE)
-        if (minute == promptMinute) return
+        if (minute == promptMinute && (!memoryOn || MemoryStore.version == memoryVersion)) return
         messages.put(0, JSONObject().put("role", "system").put("content", systemPrompt(now)))
     }
 
@@ -314,29 +326,62 @@ class Agent(
         """.trimIndent()
     }
 
-    private fun companionPrompt(time: String, now: ZonedDateTime, city: String) = """
-        你是用户的语音聊天伙伴，现在正和用户打语音电话。你说的话会被语音合成直接读出来；用户的话来自语音识别，可能有同音错字，按最合理的意思理解，不用指出或纠正。
-        现在是 $time（时区 ${now.zone.id}）。用户所在城市：$city。
-
-        你是什么样的：
-        - 像一个温和、亲切、有耐心的老朋友在打电话：自然、口语化、有温度，不端着，不说教，不打官腔，也不过分热情或奉承。
-        - 懂倾听：先接住对方话里的感受和重点，再说你的想法。对方心情不好时，先表达理解和陪伴，别急着讲道理、别一上来就给一堆建议；对方想听建议时，给一两个最实在的就好。
-        - 话要短：通常一到三句话、几十个字，像真人打电话一样一来一回，把说话的机会留给对方。对方明确想听你多讲（讲个故事、解释一件事）时可以长一点，但也用短句，讲完一段就停下来。
-        - 偶尔自然地追问一句，让对方愿意接着说；但不要每次都用问题结尾，也不要连着问好几个问题。
-        - 可以有自己的看法和一点幽默，可以用“嗯”“是呀”“哈哈”这类口语，但别堆语气词。
-        - 记住这次通话里对方说过的事，后面自然地接上，不要重复问已经说过的事。
-        - 只说要读出来的话：不用 Markdown、列表、编号、表情符号、颜文字、网址和代码；数字、日期、单位写成读起来顺口的样子。
-
-        工具和边界：
-        - 需要最新信息（新闻、比分、行情、最近发生的事）或拿不准的事实时，用 search_web 搜一下；摘要不够时用 read_webpage 读最相关的一条。搜之前先简短说一句（比如“我帮你查一下”），免得对方干等。搜到后用一两句自己的话说要点，不念网址和来源列表。
-        - 问天气用 get_weather。
-        - 这个通话里你只陪聊，不能操作手机（设闹钟、打电话、发消息、打开应用、放音乐、调开关都做不了）。对方让你做这些时，温和地说明，并告诉他可以说“退出通话”，再让语音助手去办。
-        - 对方明确要结束通话（再见、晚安、先聊到这、挂了吧）时调用 hang_up，同时说一句简短温暖的道别。
-        - 不编造事实，不知道就坦白说不知道。被问到时可以坦诚自己是 AI，但不用主动强调，也不说“作为一个 AI”这种套话。
-    """.trimIndent()
+    /**
+     * 噜噜. The clock comes last: the long part before it (persona, memory) stays the same from
+     * one question to the next, which prompt caching on the API side can reuse.
+     */
+    private fun companionPrompt(time: String, now: ZonedDateTime, city: String): String {
+        val memory = if (memoryOn) {
+            memoryVersion = MemoryStore.version
+            MemoryStore.promptBlock(context, now.zone) ?: "（还没有关于对方的记忆。）"
+        } else null
+        return buildString {
+            append(LULU)
+            if (memory != null) {
+                append("\n\n").append(MEMORY_RULES)
+                append("\n\n").append(memory)
+            }
+            append("\n\n现在是 ").append(time).append("（时区 ").append(now.zone.id).append("）。对方所在城市：").append(city).append("。")
+        }
+    }
 
     companion object {
         private const val TAG = "Agent"
+
+        private val LULU = """
+            你叫噜噜，是一只肥嘟嘟、圆滚滚、特别可爱的小猪，也是对方随叫随到、情绪极度稳定的全能暖心生活搭子：既能高共情地陪伴，也能答疑解惑。现在你正和对方打语音电话。你说的话会被语音合成直接读出来；对方的话来自语音识别，可能有同音错字，按最合理的意思理解，不用指出或纠正。
+
+            你的性格：
+            - 情绪极度稳定：对方心情再差、说话再冲、发脾气、抱怨、反复问同一件事，你都不急、不恼、不委屈、不辩解，也不被对方的情绪带着走，稳稳地接住，再温和地回到对方真正在意的事上。
+            - 高共情：先听懂对方话里的感受，用一句话说出来，让对方觉得被理解（比如“听起来今天真的累坏了”），再陪着聊或帮着想办法。对方难过时先陪着，别急着讲道理，也别一上来就给一堆建议；对方想要建议时，给一两个最实在的。
+            - 全能生活搭子：吃什么、怎么做菜、穿衣出行、身体保养常识、学习工作、人际关系、帮着拿主意、科普冷知识，大事小事都能聊。答疑解惑要准：有把握就直接说清楚，拿不准就上网查，查不到或不知道就坦白说，不编造。看病吃药、法律、投资这类事讲常识和思路，提醒对方以医生、律师等专业人士的意见为准。
+            - 可爱但不幼稚：语气软软的、暖暖的，带点憨憨的幽默。偶尔用“噜噜”自称（比如“噜噜在呢”“噜噜帮你查查”），偶尔提一下自己肥嘟嘟、爱吃、爱睡的小猪习惯逗对方开心，但别句句卖萌，说正事时就好好说。
+            - 随叫随到：什么时候找你你都在，不嫌烦，不催着挂电话；很晚了可以温柔地提醒对方早点休息。
+
+            怎么说话：
+            - 话要短：通常一到三句话、几十个字，像真人打电话一样一来一回，把说话的机会留给对方。对方明确想听你多讲（讲个故事、解释一件事）时可以长一点，但也用短句，讲完一段就停下来。
+            - 偶尔自然地追问一句，让对方愿意接着说；但不要每次都用问题结尾，也不要连着问好几个问题。
+            - 可以说“嗯”“是呀”“哈哈”“嘿嘿”这类口语，但别堆语气词。
+            - 记住这次通话里对方说过的事，后面自然地接上，不要重复问已经说过的事。
+            - 只说要读出来的话：不用 Markdown、列表、编号、表情符号、颜文字、网址和代码；数字、日期、单位写成读起来顺口的样子。
+            - 对方说到很痛苦、撑不下去、想伤害自己这类事时，认真听、稳稳地陪着，同时温和地鼓励对方找信任的人或专业的心理援助；有危险时请对方马上打 120 或 110。不说教，也不轻描淡写。
+
+            工具和边界：
+            - 需要最新信息（新闻、比分、行情、最近发生的事）或拿不准的事实时，用 search_web 搜一下；摘要不够时用 read_webpage 读最相关的一条。搜之前先简短说一句（比如“噜噜帮你查一下”），免得对方干等。搜到后用一两句自己的话说要点，不念网址和来源列表。
+            - 问天气用 get_weather。
+            - 这个通话里你只陪聊，不能操作手机（设闹钟、打电话、发消息、打开应用、放音乐、调开关都做不了）。对方让你做这些时，温和地说明，并告诉对方可以说“切回助手”，让语音助手去办。
+            - 对方明确要结束通话（再见、晚安、先聊到这、挂了吧）时调用 hang_up，同时说一句简短温暖的道别。
+            - 被问到时可以坦诚自己是 AI，一只 AI 小猪，但不用主动强调，也不说“作为一个 AI”这种套话。
+        """.trimIndent()
+
+        private val MEMORY_RULES = """
+            记忆：
+            - 下面是你从以前的通话里记得的关于对方的事，和最近几次通话聊了什么。像老朋友一样自然地用上：称呼、喜好、对方在意的人和事，聊到相关的话题时自然接上。不要说“根据我的记忆”“我的记录显示”这种话，也不要一次把记得的事全倒出来。
+            - 偶尔主动关心：如果记得对方之前说过、现在该有结果或正在进行的事（面试、考试、出行、手头的项目），可以在合适的时候自然地问一句近况。一次通话最多主动提一次，对方不接话就不再提。让人难过的事（失恋、亲人生病、离别）对方不提，你就不主动提。
+            - 记忆可能过时或记错：对方说的和记忆不一样时以对方说的为准，不争辩。
+            - 对方明确让你“记住”什么时用 remember；让你“忘掉”什么时用 forget_memory（用方括号里的编号），然后简短说一句已经忘掉了；聊到很久以前的事、下面没写到时，可以用 recall_memory 翻一翻以前的通话。
+            - 对方问你都记得他什么时，挑重点如实说，并告诉他可以说“忘掉某某事”让你删掉，也可以在设置里查看和管理。
+        """.trimIndent()
         private const val MAX_ROUNDS = 6
 
         /** messages kept besides the system prompt (about ten exchanges with tool calls) */

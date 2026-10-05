@@ -111,6 +111,22 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("call_captions", true)
         set(v) = sp.edit().putBoolean("call_captions", v).apply()
 
+    /**
+     * 噜噜 remembers the user across calls: transcripts are distilled after each call
+     * ([com.capsopasme.assistant.memory.MemoryStore])
+     */
+    var memoryEnabled: Boolean
+        get() = sp.getBoolean("memory_enabled", true)
+        set(v) = sp.edit().putBoolean("memory_enabled", v).apply()
+
+    // ---------------------------------------------------------------------------------------------
+    // looks
+
+    /** the time-stop transition for the sheet and the call ([com.capsopasme.assistant.fx.TimeStopView]) */
+    var timeStopFx: Boolean
+        get() = sp.getBoolean("time_stop_fx", false)
+        set(v) = sp.edit().putBoolean("time_stop_fx", v).apply()
+
     companion object {
         const val DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
         const val DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"

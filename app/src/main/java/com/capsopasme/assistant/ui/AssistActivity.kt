@@ -8,6 +8,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
@@ -39,6 +40,11 @@ import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.call.CallActivity
 import com.capsopasme.assistant.call.CallCommands
 import com.capsopasme.assistant.call.CallService
+import com.capsopasme.assistant.fx.Haptics
+import com.capsopasme.assistant.fx.ScreenGrab
+import com.capsopasme.assistant.fx.TimeStopView
+import com.capsopasme.assistant.fx.recycleLater
+import com.capsopasme.assistant.fx.setStatusBarHidden
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -68,6 +74,13 @@ class AssistActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var mic: ImageButton
     private lateinit var send: ImageButton
+    private lateinit var timeStop: TimeStopView
+
+    /** time is stopped: the frozen screen is showing under the card */
+    private var fxShown = false
+
+    /** the frozen frame, freed with the sheet */
+    private var fxFrame: Bitmap? = null
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -204,11 +217,13 @@ class AssistActivity : Activity() {
         input = findViewById(R.id.input)
         mic = findViewById(R.id.mic)
         send = findViewById(R.id.send)
+        timeStop = findViewById(R.id.timeStop)
         answer.movementMethod = ScrollingMovementMethod()
 
         // edge-to-edge (targetSdk 36): keep the card above the gesture bar and the keyboard
         root.setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            // ignoring visibility: hiding the status bar (time stop) must not move the card
+            val bars = insets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
             val ime = insets.getInsets(WindowInsets.Type.ime())
             v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             WindowInsets.CONSUMED
@@ -251,7 +266,8 @@ class AssistActivity : Activity() {
         findViewById<Button>(R.id.confirmYes).setOnClickListener { answerConfirm(true) }
         findViewById<Button>(R.id.confirmNo).setOnClickListener { answerConfirm(false) }
 
-        playEnter()
+        if (prefs.timeStopFx) startTimeStop() else playEnter()
+        // listening doesn't wait for any animation: speak right away
         startListening()
     }
 
@@ -297,6 +313,9 @@ class AssistActivity : Activity() {
         statusPulse?.cancel()
         scrimAnimator?.cancel()
         main.removeCallbacksAndMessages(null)
+        timeStop.cancel()
+        recycleLater(fxFrame)
+        fxFrame = null
         capture.stop()
         asr.cancel()
         asr.unbind()
@@ -564,7 +583,7 @@ class AssistActivity : Activity() {
     // motion: transform / alpha only (GPU, no relayout per frame), all short
 
     /** card slides up from below the screen edge, scrim fades in, mic pops */
-    private fun playEnter() {
+    private fun playEnter(withScrim: Boolean = true) {
         scrim.alpha = 0
         card.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
@@ -577,7 +596,7 @@ class AssistActivity : Activity() {
                     .withLayer()
                     .withEndAction { if (!dismissing) enableLayoutAnimations() }
                     .start()
-                animateScrim(255, ENTER_MS * 3 / 4)
+                if (withScrim) animateScrim(255, ENTER_MS * 3 / 4)
                 mic.scaleX = 0.6f
                 mic.scaleY = 0.6f
                 mic.animate()
@@ -607,15 +626,64 @@ class AssistActivity : Activity() {
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(input.windowToken, 0)
         card.layoutTransition = null
         card.animate().cancel()
+        // time stopped: the sheet closes when time flows again, not when the card is gone
+        val timeFlows = fxShown
         card.animate()
             .translationY(offscreenDistance())
             .setDuration(EXIT_MS)
             .setInterpolator(EMPHASIZED_ACCELERATE)
             .withLayer()
-            .withEndAction { finish() }
+            .withEndAction { if (!timeFlows) finish() }
             .start()
-        animateScrim(0, EXIT_MS)
+        if (timeFlows) {
+            main.removeCallbacks(cardIn)
+            setStatusBarHidden(false)
+            Haptics.timeResume(this)
+            timeStop.play(TimeStopView.Style.Freeze, enter = false, fxCenterX(), fxCenterY()) { finish() }
+        } else {
+            animateScrim(0, EXIT_MS)
+        }
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // time stop
+
+    /**
+     * The time-stop entrance: grab the screen as it is right now (our window is still fully
+     * transparent), then freeze it and bring the card in once the sphere has swept past.
+     */
+    private fun startTimeStop() {
+        scrim.alpha = 0
+        // nothing of ours may be on screen while it's grabbed
+        card.visibility = View.INVISIBLE
+        val screen = windowManager.currentWindowMetrics.bounds
+        Thread({
+            val shot = ScreenGrab.capture(screen.width(), screen.height(), withHalf = false)
+            main.post {
+                if (destroyed || dismissing || isFinishing) {
+                    // closed while grabbing: never drawn
+                    shot?.full?.recycle()
+                    return@post
+                }
+                fxFrame = shot?.full
+                fxShown = true
+                timeStop.setWorld(shot?.full)
+                setStatusBarHidden(true)
+                Haptics.timeStop(this)
+                timeStop.play(TimeStopView.Style.Freeze, enter = true, fxCenterX(), fxCenterY()) {}
+                main.postDelayed(cardIn, FX_CARD_DELAY_MS)
+            }
+        }, "time-stop-grab").start()
+    }
+
+    private val cardIn = Runnable {
+        if (dismissing || destroyed) return@Runnable
+        card.visibility = View.VISIBLE
+        playEnter(withScrim = false)
+    }
+
+    private fun fxCenterX() = timeStop.width / 2f
+    private fun fxCenterY() = timeStop.height * 0.5f
 
     private fun offscreenDistance(): Float =
         (card.height + (card.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin + root.paddingBottom).toFloat()
@@ -712,6 +780,9 @@ class AssistActivity : Activity() {
         private const val AUTO_CLOSE_MAX_MS = 10_000L
 
         private const val ENTER_MS = 420L
+
+        /** the card slides in once the time-stop sphere has swept most of the screen */
+        private const val FX_CARD_DELAY_MS = 380L
         private const val EXIT_MS = 220L
         private const val LAYOUT_MS = 220L
         /** halo scale at full voice level: 40dp mic -> 60dp, fits the row's 10dp padding */

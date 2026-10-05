@@ -26,6 +26,9 @@ object ToolLabels {
         "hang_up" to "挂断",
         "search_web" to "搜索",
         "read_webpage" to "看网页",
+        "remember" to "记下来",
+        "forget_memory" to "忘掉",
+        "recall_memory" to "回想",
     )
 
     fun status(tool: String): String = LABELS[tool]?.let { "正在$it…" } ?: "正在执行…"

@@ -7,8 +7,10 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.IBinder
+import android.os.PowerManager
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
@@ -19,6 +21,11 @@ import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.R
+import com.capsopasme.assistant.fx.Haptics
+import com.capsopasme.assistant.fx.ScreenGrab
+import com.capsopasme.assistant.fx.TimeStopView
+import com.capsopasme.assistant.fx.recycleLater
+import com.capsopasme.assistant.fx.setStatusBarHidden
 
 /**
  * The voice call screen. Starts [CallService] (from here, while visible: a microphone service
@@ -28,11 +35,16 @@ import com.capsopasme.assistant.R
  *
  * Shown over the lock screen, like an incoming-call screen: turning the screen back on during a
  * call shows it without unlocking.
+ *
+ * The theme is translucent so the time-stop effect can grab the screen behind before the call
+ * bursts out of it; the window turns opaque right away, or once that has played.
  */
 class CallActivity : Activity(), CallService.Ui {
 
     private lateinit var prefs: Prefs
-    private lateinit var orb: OrbView
+    private lateinit var callRoot: View
+    private lateinit var lulu: LuluView
+    private lateinit var timeStop: TimeStopView
     private lateinit var status: TextView
     private lateinit var userText: TextView
     private lateinit var answer: TextView
@@ -51,6 +63,15 @@ class CallActivity : Activity(), CallService.Ui {
     private var chronoBase = 0L
     private var backHintShown = false
     private var closing = false
+
+    /** the time-stop entrance is grabbing the screen or playing */
+    private var fxEntering = false
+
+    /** the time-stop exit is playing: the screen closes when it ends */
+    private var exiting = false
+
+    /** the frozen world (half resolution), kept for the exit when the call ends */
+    private var fxFrame: Bitmap? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder) {
@@ -71,7 +92,9 @@ class CallActivity : Activity(), CallService.Ui {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_call)
         prefs = Prefs(this)
-        orb = findViewById(R.id.orb)
+        callRoot = findViewById(R.id.callRoot)
+        lulu = findViewById(R.id.lulu)
+        timeStop = findViewById(R.id.timeStop)
         status = findViewById(R.id.callStatus)
         userText = findViewById(R.id.callUser)
         answer = findViewById(R.id.callAnswer)
@@ -84,12 +107,13 @@ class CallActivity : Activity(), CallService.Ui {
         speakerLabel = findViewById(R.id.callSpeakerLabel)
         duration = findViewById(R.id.duration)
 
-        findViewById<View>(R.id.callRoot).setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+        callRoot.setOnApplyWindowInsetsListener { v, insets ->
+            // ignoring visibility: hiding the status bar (time stop) must not move anything
+            val bars = insets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
             v.setPadding(v.paddingLeft, bars.top, v.paddingRight, bars.bottom)
             WindowInsets.CONSUMED
         }
-        orb.setOnClickListener { service?.tap() }
+        lulu.setOnClickListener { service?.tap() }
         findViewById<View>(R.id.callHangUp).setOnClickListener {
             val s = service
             if (s != null) s.hangUp() else finishCall()
@@ -113,6 +137,13 @@ class CallActivity : Activity(), CallService.Ui {
             moveTaskToBack(true)
         }
 
+        // a new call, started in front of the user: burst out of stopped time
+        val fx = prefs.timeStopFx && savedInstanceState == null && !CallService.running &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
+                getSystemService(PowerManager::class.java).isInteractive &&
+                !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        if (fx) startTimeStop() else setTranslucent(false)
+
         connectOrStart()
     }
 
@@ -134,6 +165,9 @@ class CallActivity : Activity(), CallService.Ui {
     }
 
     override fun onDestroy() {
+        timeStop.cancel()
+        recycleLater(fxFrame)
+        fxFrame = null
         service?.detach(this)
         service = null
         if (bound) {
@@ -182,14 +216,14 @@ class CallActivity : Activity(), CallService.Ui {
 
     override fun render(state: CallService.State) {
         if (closing) return
-        orb.mode = when {
-            state.phase == CallService.Phase.Paused || state.muted && state.phase == CallService.Phase.Listening -> OrbView.Mode.Muted
-            state.phase == CallService.Phase.Listening -> OrbView.Mode.Listening
+        lulu.mode = when {
+            state.phase == CallService.Phase.Paused || state.muted && state.phase == CallService.Phase.Listening -> LuluView.Mode.Muted
+            state.phase == CallService.Phase.Listening -> LuluView.Mode.Listening
             // the question is read out first, then the answer is listened for
-            state.phase == CallService.Phase.Confirming -> if (state.micOpen) OrbView.Mode.Listening else OrbView.Mode.Speaking
-            state.phase == CallService.Phase.Thinking -> OrbView.Mode.Thinking
-            state.phase == CallService.Phase.Speaking -> OrbView.Mode.Speaking
-            else -> OrbView.Mode.Idle
+            state.phase == CallService.Phase.Confirming -> if (state.micOpen) LuluView.Mode.Listening else LuluView.Mode.Speaking
+            state.phase == CallService.Phase.Thinking -> LuluView.Mode.Thinking
+            state.phase == CallService.Phase.Speaking -> LuluView.Mode.Speaking
+            else -> LuluView.Mode.Idle
         }
         status.text = state.status
 
@@ -234,7 +268,7 @@ class CallActivity : Activity(), CallService.Ui {
         service?.let { volumeControlStream = it.volumeStream }
     }
 
-    override fun onLevel(rms: Float) = orb.setLevel(rms)
+    override fun onLevel(rms: Float) = lulu.setLevel(rms)
 
     override fun onEnded(launches: List<Intent>) {
         if (closing) return
@@ -265,14 +299,79 @@ class CallActivity : Activity(), CallService.Ui {
             }
         }
         closing = false
-        finishCall()
+        // the app (the assistant sheet) is opening over this: no effect underneath it
+        finishCall(effect = false)
     }
 
-    private fun finishCall() {
-        if (isFinishing) return
+    /** @param effect time flows again (the time-stop exit) if it's on and the call is in view */
+    private fun finishCall(effect: Boolean = true) {
+        if (isFinishing || exiting) return
         closing = true
         duration.stop()
-        finishAndRemoveTask()
+        val play = effect && prefs.timeStopFx && visible && !fxEntering && chronoBase != 0L &&
+                getSystemService(PowerManager::class.java).isInteractive &&
+                !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        if (!play) {
+            finishAndRemoveTask()
+            return
+        }
+        // the call collapses into 噜噜, the world frozen when it started thaws around it
+        exiting = true
+        timeStop.setWorld(fxFrame)
+        setStatusBarHidden(true)
+        Haptics.timeResume(this)
+        val (x, y) = luluCenter()
+        timeStop.play(TimeStopView.Style.Reveal, enter = false, x, y) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+            finishAndRemoveTask()
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // time stop
+
+    /**
+     * Grabs the screen as it is (this window is still see-through and draws nothing), then the
+     * world freezes and the call bursts out of a sphere around 噜噜.
+     */
+    private fun startTimeStop() {
+        fxEntering = true
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+        callRoot.visibility = View.INVISIBLE
+        val screen = windowManager.currentWindowMetrics.bounds
+        Thread({
+            val shot = ScreenGrab.capture(screen.width(), screen.height(), withHalf = true)
+            runOnUiThread {
+                if (isDestroyed || isFinishing) {
+                    // never drawn
+                    shot?.full?.recycle()
+                    shot?.half?.recycle()
+                    return@runOnUiThread
+                }
+                fxFrame = shot?.half
+                timeStop.setWorld(shot?.full)
+                callRoot.visibility = View.VISIBLE
+                setStatusBarHidden(true)
+                Haptics.timeStop(this)
+                val (x, y) = luluCenter()
+                timeStop.play(TimeStopView.Style.Reveal, enter = true, x, y) {
+                    fxEntering = false
+                    timeStop.cancel()
+                    recycleLater(shot?.full)
+                    setStatusBarHidden(false)
+                    setTranslucent(false)
+                }
+            }
+        }, "time-stop-grab").start()
+    }
+
+    /** 噜噜's centre in the effect's coordinates */
+    private fun luluCenter(): Pair<Float, Float> {
+        val a = IntArray(2)
+        val b = IntArray(2)
+        lulu.getLocationInWindow(a)
+        timeStop.getLocationInWindow(b)
+        return (a[0] - b[0] + lulu.width / 2f) to (a[1] - b[1] + lulu.height / 2f)
     }
 
     private fun applyCaptions() {

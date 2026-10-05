@@ -2,6 +2,7 @@ package com.capsopasme.assistant.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -28,6 +29,7 @@ import com.capsopasme.assistant.asr.SpeechModel
 import com.capsopasme.assistant.call.CallActivity
 import com.capsopasme.assistant.call.CallService
 import com.capsopasme.assistant.llm.LlmClient
+import com.capsopasme.assistant.memory.MemoryStore
 
 class SettingsActivity : Activity() {
 
@@ -52,6 +54,9 @@ class SettingsActivity : Activity() {
     private lateinit var callCue: Switch
     private lateinit var callHeadsetMic: Switch
     private lateinit var callEntrySub: TextView
+    private lateinit var memoryEnabled: Switch
+    private lateinit var memoryStatus: TextView
+    private lateinit var timeStopFx: Switch
 
     private var testClient: AsrClient? = null
     private var testTts: TextToSpeech? = null
@@ -90,6 +95,9 @@ class SettingsActivity : Activity() {
         callCue = findViewById(R.id.callCue)
         callHeadsetMic = findViewById(R.id.callHeadsetMic)
         callEntrySub = findViewById(R.id.callEntrySub)
+        memoryEnabled = findViewById(R.id.memoryEnabled)
+        memoryStatus = findViewById(R.id.memoryStatus)
+        timeStopFx = findViewById(R.id.timeStopFx)
 
         deepseekKey.setText(prefs.deepseekKey)
         deepseekModel.setText(prefs.deepseekModel.takeIf { it != Prefs.DEFAULT_DEEPSEEK_MODEL } ?: "")
@@ -105,6 +113,11 @@ class SettingsActivity : Activity() {
         callIdle.setText(prefs.callIdleSeconds.toString())
         callCue.isChecked = prefs.callCue
         callHeadsetMic.isChecked = prefs.callHeadsetMic
+        memoryEnabled.isChecked = prefs.memoryEnabled
+        timeStopFx.isChecked = prefs.timeStopFx
+        // saved right away: a call or the sheet started from here must see it
+        memoryEnabled.setOnCheckedChangeListener { _, on -> prefs.memoryEnabled = on }
+        timeStopFx.setOnCheckedChangeListener { _, on -> prefs.timeStopFx = on }
 
         val llmGroup = findViewById<RadioGroup>(R.id.llmGroup)
         LlmClient.Kind.entries.forEach { k ->
@@ -187,6 +200,11 @@ class SettingsActivity : Activity() {
         }
         findViewById<Button>(R.id.ttsTest).setOnClickListener { testSpeech() }
 
+        findViewById<Button>(R.id.memoryManage).setOnClickListener {
+            startActivity(Intent(this, MemoryActivity::class.java))
+        }
+        findViewById<Button>(R.id.memoryClear).setOnClickListener { confirmClearMemory() }
+
         findViewById<Button>(R.id.permRequest).setOnClickListener {
             requestPermissions(PERMISSIONS, REQ_PERMS)
         }
@@ -206,7 +224,8 @@ class SettingsActivity : Activity() {
         renderPerms()
         renderModel()
         renderTts()
-        callEntrySub.text = if (CallService.inCall) "通话中，点按回到通话" else "像打电话一样陪你聊天"
+        renderMemory()
+        callEntrySub.text = if (CallService.inCall) "通话中，点按回到通话" else "肥嘟嘟的噜噜，随时陪你聊"
     }
 
     override fun onPause() {
@@ -226,6 +245,8 @@ class SettingsActivity : Activity() {
         prefs.callIdleSeconds = (callIdle.text.toString().toIntOrNull() ?: 180).coerceIn(0, 3600)
         prefs.callCue = callCue.isChecked
         prefs.callHeadsetMic = callHeadsetMic.isChecked
+        prefs.memoryEnabled = memoryEnabled.isChecked
+        prefs.timeStopFx = timeStopFx.isChecked
     }
 
     override fun onDestroy() {
@@ -291,9 +312,31 @@ class SettingsActivity : Activity() {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
-            t.speak("你好，语音通话时我会用这个声音回答你。", TextToSpeech.QUEUE_FLUSH, null, "test")
+            t.speak("你好呀，我是噜噜，通话的时候我就用这个声音陪你聊天。", TextToSpeech.QUEUE_FLUSH, null, "test")
         }
         testTts = tts
+    }
+
+    private fun renderMemory() {
+        val facts = MemoryStore.facts(this).size
+        val calls = MemoryStore.calls(this).size
+        val pending = MemoryStore.pendingFiles(this).size
+        memoryStatus.text = buildString {
+            append(if (facts == 0 && calls == 0) "还没有记忆" else "记得 $facts 件事、$calls 次通话")
+            if (pending > 0) append("，还有 $pending 次通话等联网后整理")
+        }
+    }
+
+    private fun confirmClearMemory() {
+        AlertDialog.Builder(this)
+            .setMessage("清空噜噜记得的所有事？清空后不能恢复。")
+            .setPositiveButton("清空") { _, _ ->
+                MemoryStore.clear(this)
+                renderMemory()
+                toast("已清空")
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun renderModel() {

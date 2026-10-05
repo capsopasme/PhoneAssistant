@@ -97,7 +97,37 @@ object CallCommands {
         val t = core(text)
         if (t.isEmpty() || ENTER_NEGATION.any { t.contains(it) }) return false
         if (CHAT_PATTERNS.any { it.matches(t) }) return true
-        return verbThenName(t, ENTER_VERBS, CALL_NAMES) || nameThenVerb(t, CALL_NAMES, ENTER_AFTER)
+        return verbThenName(t, ENTER_VERBS, CALL_NAMES) || nameThenVerb(t, CALL_NAMES, ENTER_AFTER) || callsLulu(t)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 噜噜 by name
+
+    private val LULU_NAMES = listOf("噜噜", "小猪噜噜", "噜噜猪", "小噜噜", "噜噜小猪")
+    private val LULU_BEFORE = listOf("", "找", "叫", "喊", "召唤", "跟", "和", "同")
+    private val LULU_AFTER = listOf(
+        "", "来", "过来", "快来", "出来", "快出来", "在吗", "在不在", "你在吗", "你在哪",
+        "聊聊", "聊天", "聊聊天", "聊会儿", "聊会儿天", "聊一会儿", "聊一下", "说说话", "唠唠", "陪陪我", "陪我聊聊",
+    )
+
+    /**
+     * "噜噜" "叫噜噜来" "噜噜在吗" "我想跟噜噜聊聊天": compared by sound, so "路路" "鲁鲁" also call
+     * it. Not "给露露打电话": calling someone stays a phone call.
+     */
+    private fun callsLulu(t: String): Boolean {
+        val ts = syllables(t)
+        if (ts.isEmpty() || ts.size > 9) return false
+        for (b in LULU_BEFORE) {
+            val bs = syllables(b)
+            if (!startsWith(ts, bs)) continue
+            for (a in LULU_AFTER) {
+                val asx = syllables(a)
+                if (bs.size + asx.size >= ts.size || !endsWith(ts, asx)) continue
+                val name = ts.subList(bs.size, ts.size - asx.size)
+                if (LULU_NAMES.any { name == syllables(it) }) return true
+            }
+        }
+        return false
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -125,11 +155,11 @@ object CallCommands {
         Farewell(listOf(
             "晚安", "晚安安", "睡觉晚安", "晚安好梦", "好梦", "我要睡", "我要睡觉", "我去睡", "我去睡觉", "我先睡",
             "我先去睡", "去睡觉", "睡觉去", "该睡觉", "我该睡", "我该睡觉", "我该去睡", "我要去睡",
-        ), "晚安，好梦。"),
+        ), "晚安，好梦，噜噜也去睡啦。"),
         Farewell(listOf(
             "再见", "再会", "拜拜", "拜", "白白", "掰掰", "bye", "byebye", "goodbye", "回见", "回头见", "下次见", "明天见",
             "改天见", "先这样再见", "就这样再见", "那再见", "拜了", "拜拜拜拜",
-        ), "好，拜拜，想聊天了随时找我。"),
+        ), "好，拜拜，想聊天了随时叫噜噜。"),
         Farewell(listOf(
             "下次聊", "下次再聊", "改天聊", "改天再聊", "回头聊", "回头再聊", "有空再聊", "以后再聊", "明天再聊", "明天聊",
             "先聊到这", "先聊到这里", "就聊到这", "就聊到这里", "今天就聊到这", "今天就聊到这里", "今天先聊到这",
@@ -175,7 +205,7 @@ object CallCommands {
         if (soundsLikeAny(s, HANG_UP) ||
             verbThenName(s, EXIT_VERBS, EXIT_NAMES) ||
             nameThenVerb(s, EXIT_NAMES, EXIT_AFTER)
-        ) return Exit("好的，那我先挂啦，拜拜。")
+        ) return Exit("好的，那噜噜先挂啦，拜拜。")
         return null
     }
 
