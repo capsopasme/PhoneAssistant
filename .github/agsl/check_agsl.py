@@ -1,7 +1,12 @@
 """Compile TimeStopView's AGSL with Skia's SkSL compiler and render sample frames."""
-import math, re, sys, textwrap
+import math, re, sys, textwrap, traceback
 import numpy as np
 import skia
+
+
+def note(msg, level='notice'):
+    # the run log isn't readable from where this is checked: annotations are
+    print(f"::{level}::" + str(msg).replace('%', '%25').replace('\r', '').replace('\n', '%0A'), flush=True)
 
 src = open('app/src/main/java/com/capsopasme/assistant/fx/TimeStopView.kt', encoding='utf-8').read()
 m = re.search(r'private val AGSL = """(.*?)"""\.trimIndent\(\)', src, re.S)
@@ -9,12 +14,18 @@ sksl = textwrap.dedent(m.group(1))
 print(sksl)
 print('skia', skia.__version__)
 
-effect = skia.RuntimeEffect.MakeForShader(sksl)
+try:
+    effect = skia.RuntimeEffect.MakeForShader(sksl)
+except Exception as e:
+    note(f'COMPILE FAILED (skia {skia.__version__}): {e}', 'error')
+    sys.exit(1)
 if effect is None:
-    print('COMPILE FAILED'); sys.exit(1)
-print('COMPILED OK')
-print('uniforms:', [u.name for u in effect.uniforms()])
-print('children:', [c.name for c in effect.children()])
+    note('COMPILE FAILED: no effect', 'error'); sys.exit(1)
+note(f'COMPILED OK with skia {skia.__version__}')
+try:
+    note('uniforms: ' + ', '.join(u.name for u in effect.uniforms()) + ' | children: ' + ', '.join(c.name for c in effect.children()))
+except Exception as e:
+    note(f'listing failed: {e}', 'warning')
 
 W, H = 540, 1170
 # a fake phone screen: coloured app bar, cards, text lines
@@ -83,17 +94,25 @@ def render(style, enter, t, has_world=True):
     c.drawRect(skia.Rect(0, 0, W, H), paint)
     return surf.makeImageSnapshot()
 
-rows = []
-for (style, enter, label) in [('freeze', True, 'sheet enter'), ('freeze', False, 'sheet exit'),
-                              ('reveal', True, 'call enter'), ('reveal', False, 'call exit')]:
-    rows.append([render(style, enter, t) for t in (0.0, 0.04, 0.2, 0.35, 0.5, 0.7, 1.0)])
-rows.append([render('freeze', True, t, has_world=False) for t in (0.0, 0.04, 0.2, 0.35, 0.5, 0.7, 1.0)])
-s = 0.3
-cw, ch = int(W * s), int(H * s)
-sheet = skia.Surface(cw * 7 + 8 * 8, ch * len(rows) + 8 * (len(rows) + 1))
-sc = sheet.getCanvas(); sc.clear(skia.ColorBLACK)
-for r, row in enumerate(rows):
-    for i, im in enumerate(row):
-        sc.drawImageRect(im, skia.Rect.MakeXYWH(8 + i * (cw + 8), 8 + r * (ch + 8), cw, ch))
-sheet.makeImageSnapshot().save('agsl_frames.png', skia.kPNG)
-print('rendered agsl_frames.png')
+def main():
+    rows = []
+    for (style, enter, label) in [('freeze', True, 'sheet enter'), ('freeze', False, 'sheet exit'),
+                                  ('reveal', True, 'call enter'), ('reveal', False, 'call exit')]:
+        rows.append([render(style, enter, t) for t in (0.0, 0.04, 0.2, 0.35, 0.5, 0.7, 1.0)])
+    rows.append([render('freeze', True, t, has_world=False) for t in (0.0, 0.04, 0.2, 0.35, 0.5, 0.7, 1.0)])
+    s = 0.3
+    cw, ch = int(W * s), int(H * s)
+    sheet = skia.Surface(cw * 7 + 8 * 8, ch * len(rows) + 8 * (len(rows) + 1))
+    sc = sheet.getCanvas(); sc.clear(skia.ColorBLACK)
+    for r, row in enumerate(rows):
+        for i, im in enumerate(row):
+            sc.drawImageRect(im, skia.Rect.MakeXYWH(8 + i * (cw + 8), 8 + r * (ch + 8), cw, ch))
+    sheet.makeImageSnapshot().save('agsl_frames.png', skia.kPNG)
+    print('rendered agsl_frames.png')
+
+
+try:
+    main()
+except Exception:
+    note('RENDER FAILED: ' + traceback.format_exc()[-1500:], 'warning')
+    note('RuntimeShaderBuilder API: ' + ', '.join(n for n in dir(skia.RuntimeShaderBuilder) if not n.startswith('_')), 'warning')
