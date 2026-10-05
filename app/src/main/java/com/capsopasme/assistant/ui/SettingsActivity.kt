@@ -212,7 +212,7 @@ class SettingsActivity : Activity() {
         prefs.silenceMs = (silence.text.toString().toIntOrNull() ?: 700).coerceIn(300, 2000)
         prefs.keepModelLoaded = keepLoaded.isChecked
         prefs.callSilenceMs = (callSilence.text.toString().toIntOrNull() ?: 800).coerceIn(300, 2000)
-        prefs.callIdleSeconds = (callIdle.text.toString().toIntOrNull() ?: 60).coerceIn(0, 3600)
+        prefs.callIdleSeconds = (callIdle.text.toString().toIntOrNull() ?: 180).coerceIn(0, 3600)
         prefs.callCue = callCue.isChecked
         prefs.callHeadsetMic = callHeadsetMic.isChecked
     }

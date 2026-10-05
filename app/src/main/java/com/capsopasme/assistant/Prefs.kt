@@ -90,7 +90,7 @@ class Prefs(context: Context) {
 
     /** hang up after this long without anyone speaking; 0 = never */
     var callIdleSeconds: Int
-        get() = sp.getInt("call_idle_s", 60)
+        get() = sp.getInt("call_idle_s", 180)
         set(v) = sp.edit().putInt("call_idle_s", v).apply()
 
     /** a short tone when it's the user's turn, while the call screen isn't in view */
