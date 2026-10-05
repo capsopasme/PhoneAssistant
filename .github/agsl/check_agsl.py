@@ -1,15 +1,23 @@
 """Compile TimeStopView's AGSL with Skia's SkSL compiler and render sample frames."""
 import math, re, sys, textwrap, traceback
-import numpy as np
-import skia
 
 
 def note(msg, level='notice'):
     # the run log isn't readable from where this is checked: annotations are
     print(f"::{level}::" + str(msg).replace('%', '%25').replace('\r', '').replace('\n', '%0A'), flush=True)
 
+
+try:
+    import numpy as np
+    import skia
+except Exception:
+    note('IMPORT FAILED: ' + traceback.format_exc()[-1500:], 'error')
+    sys.exit(1)
+
 src = open('app/src/main/java/com/capsopasme/assistant/fx/TimeStopView.kt', encoding='utf-8').read()
 m = re.search(r'private val AGSL = """(.*?)"""\.trimIndent\(\)', src, re.S)
+if not m:
+    note('AGSL not found in TimeStopView.kt', 'error'); sys.exit(1)
 sksl = textwrap.dedent(m.group(1))
 print(sksl)
 print('skia', skia.__version__)
