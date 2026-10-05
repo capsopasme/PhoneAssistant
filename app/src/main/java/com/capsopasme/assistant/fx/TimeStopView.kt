@@ -13,6 +13,7 @@ import android.graphics.Paint
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
@@ -44,7 +45,13 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     enum class Style { Freeze, Reveal }
 
-    private val shader = RuntimeShader(AGSL)
+    /** null if the GPU driver refused it: then there's simply no effect */
+    private val shader: RuntimeShader? = try {
+        RuntimeShader(AGSL)
+    } catch (e: Exception) {
+        Log.e(TAG, "time-stop shader refused", e)
+        null
+    }
     private val paint = Paint().apply { shader = this@TimeStopView.shader }
     private var world: Bitmap? = null
     private var animator: ValueAnimator? = null
@@ -66,6 +73,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
      */
     fun setWorld(bitmap: Bitmap?) {
         world = bitmap
+        val shader = shader ?: return
         if (bitmap == null) {
             // a child must always be set; this one is never looked at (hasWorld = 0)
             shader.setInputShader("world", LinearGradient(0f, 0f, 1f, 0f, Color.BLACK, Color.BLACK, Shader.TileMode.CLAMP))
@@ -83,6 +91,11 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
         animator?.let {
             animator = null
             it.cancel()
+        }
+        val shader = shader
+        if (shader == null) {
+            post(onEnd)
+            return
         }
         visibility = VISIBLE
         if (width == 0 || height == 0) {
@@ -153,12 +166,13 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onDraw(canvas: Canvas) {
         // runtime shaders only draw on the GPU
-        if (!canvas.isHardwareAccelerated) return
+        if (shader == null || !canvas.isHardwareAccelerated) return
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
     }
 
     /** where this view sits on the captured frame; a frame from another orientation is dropped */
     private fun mapWorld() {
+        val shader = shader ?: return
         val bmp = world ?: return
         val loc = IntArray(2)
         getLocationOnScreen(loc)
@@ -179,6 +193,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     /** the effect at [t] (0..1) of the current half */
     private fun frame(t: Float) {
+        val shader = shader ?: return
         val r = maxRadius * 1.04f
         val radius: Float
         var inInv = 0f
@@ -241,6 +256,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private fun easeIn(x: Float) = x * x * x
 
     companion object {
+        private const val TAG = "TimeStopView"
         const val FREEZE_ENTER_MS = 950L
         const val FREEZE_EXIT_MS = 480L
         const val REVEAL_ENTER_MS = 950L
