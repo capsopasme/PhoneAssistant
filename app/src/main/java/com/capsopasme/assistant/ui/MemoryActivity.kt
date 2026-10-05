@@ -12,7 +12,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.R
+import com.capsopasme.assistant.memory.MemoryDistiller
+import com.capsopasme.assistant.memory.MemoryJobService
 import com.capsopasme.assistant.memory.MemoryStore
 import java.time.Instant
 import java.time.ZoneId
@@ -25,6 +28,9 @@ class MemoryActivity : Activity() {
 
     private lateinit var list: LinearLayout
     private val date = DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.CHINA)
+
+    /** the "立即整理" button is running */
+    private var distilling = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,14 +50,32 @@ class MemoryActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // calls left over (the job was dropped, or never got scheduled): give it another go
+        if (!distilling && Prefs(this).memoryEnabled && MemoryStore.pendingFiles(this).isNotEmpty()) {
+            MemoryJobService.schedule(this)
+        }
         render()
+    }
+
+    private fun distillNow() {
+        if (distilling) return
+        distilling = true
+        render()
+        MemoryJobService.runNow(this) {
+            distilling = false
+            if (isDestroyed) return@runNow
+            render()
+            val left = MemoryStore.pendingFiles(this).size
+            val msg = if (left == 0) "整理好了" else MemoryDistiller.problem(this) ?: "还有 $left 次没整理完，联网后会继续"
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun render() {
         list.removeAllViews()
         text("噜噜的记忆", 26f, R.color.text_primary, bold = true)
         text(
-            "噜噜在通话里会自然地用到这些。点“删除”去掉一条；通话里说“忘掉某某事”也可以。每次挂断后联网时会自动整理新的记忆。",
+            "噜噜在通话里会自然地用到这些。点“删除”去掉一条；通话里说“忘掉某某事”也可以。每次挂断后联网时会自动整理新的记忆，也可以点“立即整理”。",
             13f, R.color.text_secondary, top = 8,
         )
 
@@ -78,7 +102,18 @@ class MemoryActivity : Activity() {
         }
 
         val pending = MemoryStore.pendingFiles(this).size
-        if (pending > 0) text("还有 $pending 次通话等联网后整理。", 13f, R.color.text_secondary, top = 12)
+        if (pending > 0) {
+            text("还有 $pending 次通话等联网后整理。", 13f, R.color.text_secondary, top = 12)
+            MemoryDistiller.problem(this)?.let { text(it, 13f, R.color.error, top = 4) }
+            val now = Button(this, null, 0, android.R.style.Widget_DeviceDefault_Button_Borderless_Colored).apply {
+                text = if (distilling) "整理中…" else "立即整理"
+                isEnabled = !distilling
+                setOnClickListener { distillNow() }
+            }
+            list.addView(now, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(4) })
+        }
 
         if (facts.isNotEmpty() || calls.isNotEmpty() || pending > 0) {
             val clear = Button(this, null, 0, android.R.style.Widget_DeviceDefault_Button_Borderless_Colored).apply {
@@ -97,6 +132,7 @@ class MemoryActivity : Activity() {
             .setMessage("清空噜噜记得的所有事？清空后不能恢复。")
             .setPositiveButton("清空") { _, _ ->
                 MemoryStore.clear(this)
+                MemoryDistiller.setProblem(this, null)
                 Toast.makeText(this, "已清空", Toast.LENGTH_SHORT).show()
                 render()
             }

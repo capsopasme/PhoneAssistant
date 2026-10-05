@@ -68,6 +68,10 @@ class SettingsActivity : Activity() {
         MediaSilencer.restoreLeftover(this)
         setContentView(R.layout.activity_settings)
         prefs = Prefs(this)
+        // calls whose memory wasn't distilled yet (the job was dropped or refused): try again
+        if (prefs.memoryEnabled && com.capsopasme.assistant.memory.MemoryStore.pendingFiles(this).isNotEmpty()) {
+            com.capsopasme.assistant.memory.MemoryJobService.schedule(this)
+        }
 
         findViewById<View>(R.id.scroll).setOnApplyWindowInsetsListener { v, insets ->
             val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())

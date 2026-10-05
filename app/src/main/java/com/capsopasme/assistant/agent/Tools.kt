@@ -856,7 +856,7 @@ class Tools(private val ctx: Context, private val host: Host) {
                     props("url" to str("网址，来自 search_web 的结果")), "url")
                 fn("get_weather", "查天气（实时和未来几天）",
                     props("city" to str("城市名，可选，不填用默认城市"), "days" to int("预报天数 1-7，默认 1")))
-                fn("hang_up", "结束这次语音通话。只在用户明确想结束（再见、晚安、先聊到这、挂了吧）时调用；道别的话和这个调用写在同一条回复里（调用之后不会再让你说话）", props())
+                fn("hang_up", "结束这次语音通话。用户明确想结束（再见、晚安、先聊到这、挂了吧、退下吧、你走吧）时调用。只要你这条回复是在道别，就必须同时调用它，否则电话不会挂断；道别的话和这个调用写在同一条回复里（调用之后不会再让你说话）", props())
             }
         }
 

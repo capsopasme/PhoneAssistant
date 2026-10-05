@@ -9,6 +9,8 @@
     <!-- find songs by name for Gramophone -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- the memory job waits for a network: JobScheduler refuses a network constraint without it -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- voice call: a microphone foreground service that keeps going with the screen off -->

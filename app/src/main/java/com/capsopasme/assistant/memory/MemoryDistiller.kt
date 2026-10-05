@@ -25,6 +25,23 @@ object MemoryDistiller {
     @Volatile
     private var client: LlmClient? = null
 
+    /** why the last attempt failed, for the memory page; set while distilling */
+    @Volatile
+    private var lastError: String? = null
+
+    private const val STATUS = "memory_status"
+    private const val KEY_PROBLEM = "problem"
+
+    /** what keeps the waiting calls from being distilled, shown on the memory page; null if nothing */
+    fun problem(ctx: Context): String? =
+        ctx.applicationContext.getSharedPreferences(STATUS, Context.MODE_PRIVATE).getString(KEY_PROBLEM, null)
+
+    fun setProblem(ctx: Context, text: String?) {
+        ctx.applicationContext.getSharedPreferences(STATUS, Context.MODE_PRIVATE).edit().apply {
+            if (text == null) remove(KEY_PROBLEM) else putString(KEY_PROBLEM, text)
+        }.apply()
+    }
+
     /** aborts the running request (the job was stopped) */
     fun cancel() {
         client?.cancel()
@@ -47,7 +64,10 @@ object MemoryDistiller {
             return false
         }
         // no key yet: the calls wait, the next call's end schedules this again
-        val provider = prefs.currentProvider() ?: return false
+        val provider = prefs.currentProvider() ?: run {
+            setProblem(ctx, "${prefs.provider.label} 还没有填 API Key")
+            return false
+        }
         for (file in MemoryStore.pendingFiles(ctx)) {
             if (Thread.currentThread().isInterrupted) return true
             val transcript = MemoryStore.readPending(file)
@@ -61,17 +81,30 @@ object MemoryDistiller {
                     if (MemoryStore.applyPending(ctx, file, r.add, r.update, r.delete, r.summary, transcript.time)) {
                         Log.i(TAG, "call ${transcript.time}: +${r.add.size} ~${r.update.size} -${r.delete.size}")
                     }
+                    setProblem(ctx, null)
                 }
-                Outcome.Cancelled, Outcome.Later -> return true
-                Outcome.Settings -> return false
+                Outcome.Cancelled -> return true
+                Outcome.Later -> {
+                    setProblem(ctx, "暂时连不上（${lastError ?: "网络或服务器忙"}），稍后自动重试")
+                    return true
+                }
+                Outcome.Settings -> {
+                    setProblem(ctx, "请检查设置里的 API Key 和模型：${lastError ?: "请求被拒绝"}")
+                    return false
+                }
                 Outcome.Failed -> {
-                    if (MemoryStore.noteFailure(file) < MAX_TRIES) return true
+                    if (MemoryStore.noteFailure(file) < MAX_TRIES) {
+                        setProblem(ctx, "整理失败（${lastError ?: "未知错误"}），稍后自动重试")
+                        return true
+                    }
                     Log.w(TAG, "call ${transcript.time}: failed $MAX_TRIES times, dropped")
                     MemoryStore.deletePending(file)
+                    setProblem(ctx, "有一次通话连续失败 $MAX_TRIES 次，已跳过：${lastError ?: "未知错误"}")
                 }
                 Outcome.Skip -> {
                     Log.w(TAG, "call ${transcript.time}: can't be distilled, dropped")
                     MemoryStore.deletePending(file)
+                    setProblem(ctx, "有一次通话整理不了，已跳过${lastError?.let { "：$it" } ?: ""}")
                 }
             }
         }
@@ -105,6 +138,7 @@ object MemoryDistiller {
     }
 
     private fun distill(ctx: Context, provider: LlmClient.Provider, transcript: MemoryStore.Transcript): Outcome {
+        lastError = null
         // an answer that isn't the JSON asked for: ask once more, then give up on this call
         repeat(2) {
             val c = LlmClient()
@@ -114,16 +148,19 @@ object MemoryDistiller {
             } catch (e: LlmClient.LlmException) {
                 if (c.cancelled) return Outcome.Cancelled
                 Log.w(TAG, "distilling failed", e)
+                lastError = e.message
                 return classify(e)
             } catch (e: IOException) {
                 if (c.cancelled) return Outcome.Cancelled
                 Log.w(TAG, "distilling failed", e)
+                lastError = e.message ?: e.javaClass.simpleName
                 return Outcome.Later
             } finally {
                 client = null
             }
             parse(text)?.let { return Outcome.Done(it) }
         }
+        lastError = "模型没有按要求返回 JSON"
         return Outcome.Skip
     }
 

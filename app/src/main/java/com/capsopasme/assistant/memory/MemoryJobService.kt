@@ -6,6 +6,8 @@ import android.app.job.JobScheduler
 import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 /**
@@ -42,8 +44,31 @@ class MemoryJobService : JobService() {
         private const val TAG = "MemoryJob"
         private const val JOB_ID = 0x4C55 // "LU"
 
+        /**
+         * Distills the waiting calls now, off the main thread (the memory page's button, or when
+         * the job can't be scheduled); [done] runs on the main thread afterwards. What can't be
+         * done now is left to the job.
+         */
+        fun runNow(ctx: Context, done: (() -> Unit)? = null) {
+            val app = ctx.applicationContext
+            Thread({
+                val retry = try {
+                    MemoryDistiller.runPending(app)
+                } catch (e: Exception) {
+                    Log.w(TAG, "distilling crashed", e)
+                    MemoryDistiller.setProblem(app, "整理出错：${e.message ?: e.javaClass.simpleName}")
+                    false
+                }
+                if (retry) schedule(app, fallback = false)
+                done?.let { Handler(Looper.getMainLooper()).post(it) }
+            }, "memory-distill-now").start()
+        }
+
         /** distill the calls waiting (soon, once there is a network) */
-        fun schedule(ctx: Context) {
+        fun schedule(ctx: Context) = schedule(ctx, fallback = true)
+
+        /** [fallback]: when the system refuses the job, try right away instead */
+        private fun schedule(ctx: Context, fallback: Boolean) {
             val info = JobInfo.Builder(JOB_ID, ComponentName(ctx, MemoryJobService::class.java))
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                 .setBackoffCriteria(60_000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
@@ -55,6 +80,8 @@ class MemoryJobService : JobService() {
                 ctx.getSystemService(JobScheduler::class.java).schedule(info)
             } catch (e: Exception) {
                 Log.w(TAG, "can't schedule", e)
+                MemoryDistiller.setProblem(ctx, "系统拒绝了后台整理任务：${e.message ?: e.javaClass.simpleName}")
+                if (fallback) runNow(ctx)
             }
         }
     }
