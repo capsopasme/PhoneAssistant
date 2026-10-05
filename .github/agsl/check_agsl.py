@@ -65,14 +65,14 @@ def frame(style, enter, t, R):
         u['radius'] = R * eo(seg(t, .03, .55)); u['ring'] = 1 - seg(t, .45, .62)
         u['inInv'] = 1 - seg(t, .5, .85); u['inFrz'] = seg(t, .45, .9)
     elif style == 'freeze':
-        u['radius'] = R * (1 - ei(seg(t, 0, .92))); u['ring'] = .8 * (1 - seg(t, .85, 1)); u['inFrz'] = 1
+        u['radius'] = R / 1.04 * (1 - seg(t, 0, .92) ** 2); u['ring'] = .8 * (1 - seg(t, .85, 1)); u['inFrz'] = 1
     elif enter:
         u['flash'] = .45 * (seg(t, 0, .04) - seg(t, .04, .22))
         u['zoom'] = 1 + .03 * math.sin(math.pi * seg(t, 0, .3))
         u['outInv'] = seg(t, 0, .05) * (1 - seg(t, .35, .7)); u['outFrz'] = seg(t, .35, .7)
         u['radius'] = R * eo(seg(t, .12, .85)); u['ring'] = 1 - seg(t, .78, .98); u['inClear'] = 1
     else:
-        u['radius'] = R * (1 - ei(seg(t, 0, .82))); u['ring'] = 1 - seg(t, .8, .95); u['inClear'] = 1
+        u['radius'] = R / 1.04 * (1 - seg(t, 0, .82) ** 2); u['ring'] = 1 - seg(t, .8, .95); u['inClear'] = 1
         u['outFrz'] = 1 - seg(t, .25, .95)
     u['flash'] = min(1, max(0, u['flash']))
     return u
