@@ -19,18 +19,8 @@
     <color name="call_ripple">#333F5AE0</color>
     <color name="hang_up">#FFE5393B</color>
 
-    <!-- 噜噜, the call's chubby little pig (same in dark mode: a pig stays pink) -->
-    <color name="lulu_face_light">#FFFFDDE6</color>
-    <color name="lulu_face">#FFFFB9CB</color>
-    <color name="lulu_face_edge">#FFF394AE</color>
-    <color name="lulu_ear">#FFFFAAC0</color>
-    <color name="lulu_ear_inner">#FFF07F9D</color>
-    <color name="lulu_cheek">#80FF7A9B</color>
-    <color name="lulu_eye">#FF3A2A30</color>
-    <color name="lulu_snout">#FFFF9BB5</color>
-    <color name="lulu_nostril">#FFB4466A</color>
-    <color name="lulu_mouth">#FF9C2F4C</color>
-    <color name="lulu_tongue">#FFFF8199</color>
-    <!-- listening halo, speaking ripples, thinking dots -->
-    <color name="lulu_glow">#FFFF8FAB</color>
+    <!-- the call screen's orb -->
+    <color name="orb_inner">#FF6E86FF</color>
+    <color name="orb_outer">#FF3F5AE0</color>
+    <color name="orb_idle">#FFB4B8CC</color>
 </resources>

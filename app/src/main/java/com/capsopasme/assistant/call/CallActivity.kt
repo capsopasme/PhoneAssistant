@@ -43,7 +43,7 @@ class CallActivity : Activity(), CallService.Ui {
 
     private lateinit var prefs: Prefs
     private lateinit var callRoot: View
-    private lateinit var lulu: LuluView
+    private lateinit var orb: OrbView
     private lateinit var timeStop: TimeStopView
     private lateinit var status: TextView
     private lateinit var userText: TextView
@@ -93,8 +93,9 @@ class CallActivity : Activity(), CallService.Ui {
         setContentView(R.layout.activity_call)
         prefs = Prefs(this)
         callRoot = findViewById(R.id.callRoot)
-        lulu = findViewById(R.id.lulu)
+        orb = findViewById(R.id.orb)
         timeStop = findViewById(R.id.timeStop)
+        timeStop.revealed = callRoot
         status = findViewById(R.id.callStatus)
         userText = findViewById(R.id.callUser)
         answer = findViewById(R.id.callAnswer)
@@ -113,7 +114,7 @@ class CallActivity : Activity(), CallService.Ui {
             v.setPadding(v.paddingLeft, bars.top, v.paddingRight, bars.bottom)
             WindowInsets.CONSUMED
         }
-        lulu.setOnClickListener { service?.tap() }
+        orb.setOnClickListener { service?.tap() }
         findViewById<View>(R.id.callHangUp).setOnClickListener {
             val s = service
             if (s != null) s.hangUp() else finishCall()
@@ -216,14 +217,14 @@ class CallActivity : Activity(), CallService.Ui {
 
     override fun render(state: CallService.State) {
         if (closing) return
-        lulu.mode = when {
-            state.phase == CallService.Phase.Paused || state.muted && state.phase == CallService.Phase.Listening -> LuluView.Mode.Muted
-            state.phase == CallService.Phase.Listening -> LuluView.Mode.Listening
+        orb.mode = when {
+            state.phase == CallService.Phase.Paused || state.muted && state.phase == CallService.Phase.Listening -> OrbView.Mode.Muted
+            state.phase == CallService.Phase.Listening -> OrbView.Mode.Listening
             // the question is read out first, then the answer is listened for
-            state.phase == CallService.Phase.Confirming -> if (state.micOpen) LuluView.Mode.Listening else LuluView.Mode.Speaking
-            state.phase == CallService.Phase.Thinking -> LuluView.Mode.Thinking
-            state.phase == CallService.Phase.Speaking -> LuluView.Mode.Speaking
-            else -> LuluView.Mode.Idle
+            state.phase == CallService.Phase.Confirming -> if (state.micOpen) OrbView.Mode.Listening else OrbView.Mode.Speaking
+            state.phase == CallService.Phase.Thinking -> OrbView.Mode.Thinking
+            state.phase == CallService.Phase.Speaking -> OrbView.Mode.Speaking
+            else -> OrbView.Mode.Idle
         }
         status.text = state.status
 
@@ -268,7 +269,7 @@ class CallActivity : Activity(), CallService.Ui {
         service?.let { volumeControlStream = it.volumeStream }
     }
 
-    override fun onLevel(rms: Float) = lulu.setLevel(rms)
+    override fun onLevel(rms: Float) = orb.setLevel(rms)
 
     override fun onEnded(launches: List<Intent>) {
         if (closing) return
@@ -315,16 +316,21 @@ class CallActivity : Activity(), CallService.Ui {
             finishAndRemoveTask()
             return
         }
-        // the call collapses into 噜噜, the world frozen when it started thaws around it
+        // the call collapses into the orb, the world frozen when it started thaws around it and
+        // fades into the live screen. See-through again first, so the app behind is drawn by then
+        // (and when the effect ends nothing of this window is left to slide away)
         exiting = true
+        setTranslucent(true)
         timeStop.setWorld(fxFrame)
         setStatusBarHidden(true)
         Haptics.timeResume(this)
-        val (x, y) = luluCenter()
+        val (x, y) = orbCenter()
         timeStop.play(TimeStopView.Style.Reveal, enter = false, x, y) {
             overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
             finishAndRemoveTask()
         }
+        // the frozen frame has its own status bar; the live screen gets the real one back
+        timeStop.postDelayed({ setStatusBarHidden(false) }, (TimeStopView.REVEAL_EXIT_MS * TimeStopView.REVEAL_EXIT_LIVE).toLong())
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -332,7 +338,7 @@ class CallActivity : Activity(), CallService.Ui {
 
     /**
      * Grabs the screen as it is (this window is still see-through and draws nothing), then the
-     * world freezes and the call bursts out of a sphere around 噜噜.
+     * world freezes and the call bursts out of a sphere around the orb.
      */
     private fun startTimeStop() {
         fxEntering = true
@@ -353,7 +359,7 @@ class CallActivity : Activity(), CallService.Ui {
                 callRoot.visibility = View.VISIBLE
                 setStatusBarHidden(true)
                 Haptics.timeStop(this)
-                val (x, y) = luluCenter()
+                val (x, y) = orbCenter()
                 timeStop.play(TimeStopView.Style.Reveal, enter = true, x, y) {
                     fxEntering = false
                     timeStop.cancel()
@@ -365,13 +371,13 @@ class CallActivity : Activity(), CallService.Ui {
         }, "time-stop-grab").start()
     }
 
-    /** 噜噜's centre in the effect's coordinates */
-    private fun luluCenter(): Pair<Float, Float> {
+    /** the orb's centre in the effect's coordinates */
+    private fun orbCenter(): Pair<Float, Float> {
         val a = IntArray(2)
         val b = IntArray(2)
-        lulu.getLocationInWindow(a)
+        orb.getLocationInWindow(a)
         timeStop.getLocationInWindow(b)
-        return (a[0] - b[0] + lulu.width / 2f) to (a[1] - b[1] + lulu.height / 2f)
+        return (a[0] - b[0] + orb.width / 2f) to (a[1] - b[1] + orb.height / 2f)
     }
 
     private fun applyCaptions() {

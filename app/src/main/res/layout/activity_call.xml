@@ -55,20 +55,20 @@
                 android:tint="@color/accent" />
         </LinearLayout>
 
-        <!-- 噜噜, tappable -->
+        <!-- the orb, tappable -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <com.capsopasme.assistant.call.LuluView
-                android:id="@+id/lulu"
+            <com.capsopasme.assistant.call.OrbView
+                android:id="@+id/orb"
                 android:layout_width="280dp"
                 android:layout_height="280dp"
                 android:layout_gravity="center"
                 android:background="@null"
                 android:clickable="true"
-                android:contentDescription="噜噜，点一下打断或说话"
+                android:contentDescription="点一下打断或说话"
                 android:focusable="true" />
         </FrameLayout>
 

@@ -31,10 +31,12 @@ object MemoryDistiller {
     }
 
     /**
-     * Distills every waiting call, oldest first.
+     * Distills every waiting call, oldest first. A call that can't be distilled (the provider
+     * refuses its content, the answer is never the JSON asked for, it keeps failing) is dropped
+     * rather than left in front of the others, so one bad call never stops the memory.
      * @return true to retry later (no network, the server busy), false when done or when retrying
-     * can't help until the settings change (no key, a wrong key). One run at a time: a job
-     * stopped and scheduled again waits for the stopped one to let go.
+     * can't help until the settings change (no key, a wrong key or model). One run at a time: a
+     * job stopped and scheduled again waits for the stopped one to let go.
      */
     @Synchronized
     fun runPending(ctx: Context): Boolean {
@@ -53,40 +55,25 @@ object MemoryDistiller {
                 MemoryStore.deletePending(file)
                 continue
             }
-            var result: Result? = null
-            // an answer that isn't the JSON asked for: ask once more, then give up on this call
-            for (attempt in 0 until 2) {
-                val c = LlmClient()
-                client = c
-                val text = try {
-                    c.chat(provider, request(ctx, transcript), JSONArray()) {}.text
-                } catch (e: LlmClient.LlmException) {
-                    if (c.cancelled) return true
-                    Log.w(TAG, "distilling failed", e)
-                    when {
-                        // refused or cut off: this call can't be distilled
-                        e.httpCode == 0 -> null
-                        // the server is busy or out of quota for now
-                        e.httpCode == 429 || e.httpCode >= 500 -> return true
-                        // a wrong key or model: waits for the settings to be fixed
-                        else -> return false
+            when (val outcome = distill(ctx, provider, transcript)) {
+                is Outcome.Done -> {
+                    val r = outcome.result
+                    if (MemoryStore.applyPending(ctx, file, r.add, r.update, r.delete, r.summary, transcript.time)) {
+                        Log.i(TAG, "call ${transcript.time}: +${r.add.size} ~${r.update.size} -${r.delete.size}")
                     }
-                } catch (e: IOException) {
-                    Log.w(TAG, "distilling failed", e)
-                    return true
-                } finally {
-                    client = null
                 }
-                result = text?.let { parse(it) }
-                if (result != null || text == null) break
+                Outcome.Cancelled, Outcome.Later -> return true
+                Outcome.Settings -> return false
+                Outcome.Failed -> {
+                    if (MemoryStore.noteFailure(file) < MAX_TRIES) return true
+                    Log.w(TAG, "call ${transcript.time}: failed $MAX_TRIES times, dropped")
+                    MemoryStore.deletePending(file)
+                }
+                Outcome.Skip -> {
+                    Log.w(TAG, "call ${transcript.time}: can't be distilled, dropped")
+                    MemoryStore.deletePending(file)
+                }
             }
-            // cleared from the settings meanwhile
-            if (!file.exists()) continue
-            result?.let {
-                MemoryStore.apply(ctx, it.add, it.update, it.delete, it.summary, transcript.time)
-                Log.i(TAG, "call ${transcript.time}: +${it.add.size} ~${it.update.size} -${it.delete.size}")
-            }
-            MemoryStore.deletePending(file)
         }
         return false
     }
@@ -96,6 +83,76 @@ object MemoryDistiller {
         val update: Map<Int, String>,
         val delete: List<Int>,
         val summary: String?,
+    )
+
+    private sealed interface Outcome {
+        class Done(val result: Result) : Outcome
+
+        /** the job was stopped */
+        data object Cancelled : Outcome
+
+        /** no network, or the provider busy / out of quota: later, as often as it takes */
+        data object Later : Outcome
+
+        /** a server error or a broken stream: retried, but only [MAX_TRIES] times for one call */
+        data object Failed : Outcome
+
+        /** the key or the model is wrong: everything waits until the settings change */
+        data object Settings : Outcome
+
+        /** this call can't be distilled as it is (refused, too long, never valid JSON) */
+        data object Skip : Outcome
+    }
+
+    private fun distill(ctx: Context, provider: LlmClient.Provider, transcript: MemoryStore.Transcript): Outcome {
+        // an answer that isn't the JSON asked for: ask once more, then give up on this call
+        repeat(2) {
+            val c = LlmClient()
+            client = c
+            val text = try {
+                c.chat(provider, request(ctx, transcript), JSONArray(), maxTokens = MAX_TOKENS) {}.text
+            } catch (e: LlmClient.LlmException) {
+                if (c.cancelled) return Outcome.Cancelled
+                Log.w(TAG, "distilling failed", e)
+                return classify(e)
+            } catch (e: IOException) {
+                if (c.cancelled) return Outcome.Cancelled
+                Log.w(TAG, "distilling failed", e)
+                return Outcome.Later
+            } finally {
+                client = null
+            }
+            parse(text)?.let { return Outcome.Done(it) }
+        }
+        return Outcome.Skip
+    }
+
+    private fun classify(e: LlmClient.LlmException): Outcome {
+        val code = e.httpCode
+        return when {
+            // refused by moderation, or the answer cut off: the same again would fail the same way
+            e.permanent -> Outcome.Skip
+            // an error event in the stream, an empty answer
+            code == 0 -> Outcome.Failed
+            code == 429 -> Outcome.Later
+            code == 408 || code >= 500 -> Outcome.Failed
+            code == 401 || code == 402 || code == 403 || code == 404 -> Outcome.Settings
+            // DeepSeek and GLM answer an unknown model with a 400 too
+            UNKNOWN_MODEL.containsMatchIn(e.message.orEmpty()) -> Outcome.Settings
+            // 400 / 413 / 422: about this call's content (GLM and DeepSeek refuse input that trips
+            // their moderation with a 400)
+            else -> Outcome.Skip
+        }
+    }
+
+    /** failed attempts at one call before it's dropped (no network doesn't count) */
+    private const val MAX_TRIES = 4
+
+    /** room for merging a long memory, and for Gemini's thinking (GLM-4-flash allows 4095) */
+    private const val MAX_TOKENS = 4000
+
+    private val UNKNOWN_MODEL = Regex(
+        "(?i)model[^.]{0,40}(not exist|not found|does not exist|not supported)|invalid model|model_not_found|模型不存在|模型.{0,8}不支持",
     )
 
     private fun request(ctx: Context, t: MemoryStore.Transcript): JSONArray {

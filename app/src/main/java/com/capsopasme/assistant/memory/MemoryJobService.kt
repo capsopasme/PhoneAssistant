@@ -47,6 +47,9 @@ class MemoryJobService : JobService() {
             val info = JobInfo.Builder(JOB_ID, ComponentName(ctx, MemoryJobService::class.java))
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                 .setBackoffCriteria(60_000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
+                // a call that ended offline is still distilled after a reboot (needs
+                // RECEIVE_BOOT_COMPLETED), not only once the next call starts
+                .setPersisted(true)
                 .build()
             try {
                 ctx.getSystemService(JobScheduler::class.java).schedule(info)

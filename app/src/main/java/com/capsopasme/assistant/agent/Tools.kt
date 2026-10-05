@@ -92,7 +92,7 @@ class Tools(private val ctx: Context, private val host: Host) {
                 "toggle_setting" -> toggleSetting(a)
                 "screen_off" -> rootAction("input keyevent 223", "已锁屏")
                 "get_device_status" -> deviceStatus()
-                "hang_up" -> if (host.endCall()) ok("说完这句回复后通话会结束") else err("现在不在通话中")
+                "hang_up" -> if (host.endCall()) ok("通话会在道别说完后结束") else err("现在不在通话中")
                 "remember" -> remember(a)
                 "forget_memory" -> forgetMemory(a)
                 "recall_memory" -> recallMemory(a)
@@ -856,7 +856,7 @@ class Tools(private val ctx: Context, private val host: Host) {
                     props("url" to str("网址，来自 search_web 的结果")), "url")
                 fn("get_weather", "查天气（实时和未来几天）",
                     props("city" to str("城市名，可选，不填用默认城市"), "days" to int("预报天数 1-7，默认 1")))
-                fn("hang_up", "结束这次语音通话。只在用户明确想结束（再见、晚安、先聊到这、挂了吧）时调用，同时简短温暖地道别", props())
+                fn("hang_up", "结束这次语音通话。只在用户明确想结束（再见、晚安、先聊到这、挂了吧）时调用；道别的话和这个调用写在同一条回复里（调用之后不会再让你说话）", props())
             }
         }
 

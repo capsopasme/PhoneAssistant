@@ -760,6 +760,9 @@ class CallService : Service() {
         val t = current(id) ?: return
         t.toolStarted = true
         closeContinuation()
+        // what was said before the tool ("噜噜帮你查一下") is a piece of its own, even without a
+        // full stop: never run together with the next round's text
+        if (!t.silent) t.chunker.flush()?.let { speakFor(t, it) }
         // the user controls the music themselves: don't resume it after the call
         if (name == "media_control" || name == "play_music") focus.forgetPausedPlayer()
         status = ToolLabels.status(name)

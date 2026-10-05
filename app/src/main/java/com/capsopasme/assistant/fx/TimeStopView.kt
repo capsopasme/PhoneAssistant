@@ -9,12 +9,14 @@ import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import kotlin.math.PI
@@ -23,6 +25,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -32,10 +35,15 @@ import kotlin.math.sin
  * still. Leaving reverses it: the sphere collapses and the colours come back.
  *
  * - [Style.Freeze] (the assistant sheet, drawn below the card): the world freezes and stays
- *   frozen while the sheet is open; on exit, colour flows back in from the edges.
+ *   frozen while the sheet is open. On exit the frozen sphere collapses and what is around it is
+ *   already the live screen behind the (translucent) window: when it is gone, nothing of ours is
+ *   left on screen, so closing the window shows no seam (and the system's close animation moves
+ *   an empty window).
  * - [Style.Reveal] (the voice call, drawn over the call screen): the world freezes and the call
- *   bursts out of it (the sphere's inside is see-through); on hang-up the call collapses back into
- *   the sphere's centre and the world thaws.
+ *   bursts out of it (the sphere's inside is see-through). On hang-up the call collapses back into
+ *   the sphere's centre ([revealed] is clipped to the sphere), the frozen world around it thaws
+ *   and then fades into the live screen behind the window, which the caller has made translucent
+ *   again.
  *
  * Without a frame (no root, a window that forbids screenshots) it draws a flat tinted version.
  * Per animation frame only a few shader uniforms change; the GPU does the rest. Nothing runs
@@ -44,6 +52,13 @@ import kotlin.math.sin
 class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
     enum class Style { Freeze, Reveal }
+
+    /**
+     * What [Style.Reveal] shows inside the sphere (the call screen). On the Reveal exit it is
+     * clipped to the sphere, so that once the frozen world around it fades out, the live screen
+     * behind the window shows there instead of this view's own background.
+     */
+    var revealed: View? = null
 
     /** null if the GPU driver refused it: then there's simply no effect */
     private val shader: RuntimeShader? = try {
@@ -58,6 +73,18 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private var style = Style.Freeze
     private var entering = true
     private var maxRadius = 0f
+
+    // the Reveal exit's clip of [revealed]: the sphere, in that view's coordinates
+    private var clipped: View? = null
+    private var clipCx = 0f
+    private var clipCy = 0f
+    private var clipR = 0f
+    private val sphereOutline = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            val r = clipR
+            outline.setOval((clipCx - r).roundToInt(), (clipCy - r).roundToInt(), (clipCx + r).roundToInt(), (clipCy + r).roundToInt())
+        }
+    }
 
     /** an animation is running */
     val isPlaying: Boolean get() = animator != null
@@ -109,6 +136,8 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val w = width.toFloat()
         val h = height.toFloat()
         maxRadius = max(max(hypot(cx, cy), hypot(w - cx, cy)), max(hypot(cx, h - cy), hypot(w - cx, h - cy)))
+        unclip()
+        if (style == Style.Reveal && !enter) revealed?.let { clipTo(it, cx, cy) }
         shader.setFloatUniform("size", w, h)
         shader.setFloatUniform("center", cx, cy)
         shader.setFloatUniform("edge", max(24f, 0.06f * min(w, h)))
@@ -152,8 +181,43 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
             animator = null
             it.cancel()
         }
+        unclip()
         visibility = INVISIBLE
         setWorld(null)
+    }
+
+    /** [target] shows only inside the sphere around ([cx], [cy]) (this view's coordinates) */
+    private fun clipTo(target: View, cx: Float, cy: Float) {
+        val a = IntArray(2)
+        val b = IntArray(2)
+        getLocationInWindow(a)
+        target.getLocationInWindow(b)
+        clipCx = cx + a[0] - b[0]
+        clipCy = cy + a[1] - b[1]
+        clipR = maxRadius
+        target.outlineProvider = sphereOutline
+        target.clipToOutline = true
+        target.invalidateOutline()
+        clipped = target
+    }
+
+    private fun unclip() {
+        val target = clipped ?: return
+        clipped = null
+        target.clipToOutline = false
+        target.outlineProvider = ViewOutlineProvider.BACKGROUND
+        target.visibility = VISIBLE
+    }
+
+    /** the clipped view follows the sphere; gone once the sphere is */
+    private fun updateClip(radius: Float) {
+        val target = clipped ?: return
+        if (radius <= 0.5f) {
+            target.visibility = INVISIBLE
+            return
+        }
+        clipR = radius
+        target.invalidateOutline()
     }
 
     override fun onDetachedFromWindow() {
@@ -201,6 +265,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
         var inClear = 0f
         var outInv = 0f
         var outFrz = 0f
+        var outClear = 0f
         val ring: Float
         var flash = 0f
         var zoom = 1f
@@ -216,10 +281,12 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 inFrz = seg(t, 0.45f, 0.9f)
             }
             style == Style.Freeze -> {
-                // time flows again: the frozen sphere collapses, colour comes in from the edges
-                radius = maxRadius * (1f - implode(seg(t, 0f, 0.92f)))
+                // time flows again: the frozen sphere collapses, and around it is the live screen
+                // (see-through), so when it's gone the window shows nothing of its own
+                radius = collapse(t, 0.92f)
                 ring = 0.8f * (1f - seg(t, 0.85f, 1f))
                 inFrz = 1f
+                outClear = 1f
             }
             entering -> {
                 // the world turns negative at once, the call bursts out of the sphere
@@ -232,13 +299,16 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 inClear = 1f
             }
             else -> {
-                // the call collapses into its centre, the world around it thaws
-                radius = maxRadius * (1f - implode(seg(t, 0f, 0.82f)))
+                // the call collapses into its centre, the world around it thaws, then the frozen
+                // frame (taken when the call started) fades into the live screen behind it
+                radius = collapse(t, 0.82f)
                 ring = 1f - seg(t, 0.8f, 0.95f)
                 inClear = 1f
-                outFrz = 1f - seg(t, 0.25f, 0.95f)
+                outFrz = 1f - seg(t, 0.2f, 0.7f)
+                outClear = seg(t, REVEAL_EXIT_LIVE, 1f)
             }
         }
+        updateClip(radius)
         shader.setFloatUniform("radius", radius)
         shader.setFloatUniform("zoom", zoom)
         shader.setFloatUniform("inInv", inInv)
@@ -246,7 +316,7 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
         shader.setFloatUniform("inClear", inClear)
         shader.setFloatUniform("outInv", outInv)
         shader.setFloatUniform("outFrz", outFrz)
-        shader.setFloatUniform("outClear", 0f)
+        shader.setFloatUniform("outClear", outClear)
         shader.setFloatUniform("ring", ring)
         shader.setFloatUniform("flash", flash.coerceIn(0f, 1f))
     }
@@ -256,12 +326,27 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
     /** accelerating, but already moving at the start (a cubic sits still for too long) */
     private fun implode(x: Float) = x * x
 
+    /**
+     * The exits' sphere, full at the start, gone at [end]: it ends a little below zero, so not
+     * even the antialiased pixel at the centre is left
+     */
+    private fun collapse(t: Float, end: Float) = (maxRadius + GONE) * (1f - implode(seg(t, 0f, end))) - GONE
+
     companion object {
         private const val TAG = "TimeStopView"
         const val FREEZE_ENTER_MS = 950L
         const val FREEZE_EXIT_MS = 480L
         const val REVEAL_ENTER_MS = 950L
         const val REVEAL_EXIT_MS = 620L
+
+        /**
+         * the part of the Reveal exit from which the live screen shows: the caller shows the
+         * status bar again from there
+         */
+        const val REVEAL_EXIT_LIVE = 0.55f
+
+        /** px past the centre the exits' sphere shrinks to */
+        private const val GONE = 6f
 
         private val AGSL = """
             uniform shader world;
@@ -291,20 +376,30 @@ class TimeStopView @JvmOverloads constructor(context: Context, attrs: AttributeS
             half4 main(float2 p) {
                 float2 v = p - center;
                 float d = length(v);
-                float2 dir = d > 0.5 ? v / d : float2(0.0);
                 // 1 on the sphere's rim, fading within an edge width
                 float x = (d - radius) / edge;
                 float band = exp(-x * x) * ring;
                 float inside = 1.0 - smoothstep(radius - 2.0, radius + 2.0, d);
 
+                // a see-through outside keeps the lens rim's own pixels, so the rim fades into
+                // what's behind instead of ending in a hard edge
+                float clear = mix(outClear * (1.0 - band), inClear, inside);
+                // nothing drawn here (the call screen inside, the live screen outside): no look-ups
+                if (clear > 0.999 && band < 0.002 && flash < 0.002) return half4(0.0);
+
                 float inv = mix(outInv, inInv, inside);
                 float frz = mix(outFrz, inFrz, inside);
-                float clear = mix(outClear, inClear, inside);
 
-                // the rim bends the world outwards and splits red and blue apart
+                // the rim bends the world outwards and splits red and blue apart; away from the rim
+                // (most of the screen) that's one look-up instead of three
+                float2 dir = d > 0.5 ? v / d : float2(0.0);
                 float2 q = center + v / zoom - dir * band * edge * 0.3;
-                float ca = band * 8.0;
-                float3 seen = float3(worldAt(q - dir * ca).r, worldAt(q).g, worldAt(q + dir * ca).b);
+                float3 seen = worldAt(q);
+                if (band > 0.002) {
+                    float ca = band * 8.0;
+                    seen.r = worldAt(q - dir * ca).r;
+                    seen.b = worldAt(q + dir * ca).b;
+                }
                 // no frame: a flat dark tint instead (see/through for the sheet, solid for the call)
                 float3 rgb = mix(float3(0.07, 0.08, 0.13), seen, hasWorld);
                 float alpha = mix(mix(fbNormal, fbGraded, max(inv, frz)), 1.0, hasWorld);

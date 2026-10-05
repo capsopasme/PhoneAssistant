@@ -16,5 +16,7 @@
     <color name="call_button_icon">#FFE6E5EB</color>
     <color name="call_ripple">#409AABFF</color>
     <color name="hang_up">#FFE5393B</color>
-    <color name="lulu_glow">#FFE37A97</color>
+    <color name="orb_inner">#FFA9B7FF</color>
+    <color name="orb_outer">#FF4F63D6</color>
+    <color name="orb_idle">#FF4A4C5A</color>
 </resources>

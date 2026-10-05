@@ -49,6 +49,9 @@ class SpeechChunker {
                 c in SENTENCE_END -> return cutAfter(i)
                 // "3.5" / "v1.2" are not sentence ends; ". " in English is
                 c == '.' && i + 1 < buf.length && buf[i + 1].isWhitespace() -> return cutAfter(i)
+                // "晚安呀～好梦" ends a sentence at the tilde; "3～5" is a range
+                c in TILDES && i + 1 < buf.length && buf[i + 1] !in TILDES &&
+                        !(i > 0 && buf[i - 1].isDigit() && buf[i + 1].isDigit()) -> return cutAfter(i)
                 // ASCII "," / ":" only before a space: "1,000" and "https://" are not pauses
                 c in PAUSE && (c.code >= 128 || i + 1 < buf.length && buf[i + 1].isWhitespace()) -> {
                     val len = i + 1
@@ -61,15 +64,16 @@ class SpeechChunker {
         return null
     }
 
-    /** include closing quotes / brackets and repeated marks ("！！", "。”") in the piece */
+    /** include closing quotes / brackets and repeated marks ("！！", "。”", "～～") in the piece */
     private fun cutAfter(i: Int): Int {
         var j = i + 1
-        while (j < buf.length && (buf[j] in SENTENCE_END || buf[j] in CLOSERS)) j++
+        while (j < buf.length && (buf[j] in SENTENCE_END || buf[j] in CLOSERS || buf[j] in TILDES)) j++
         return j
     }
 
     companion object {
         private const val SENTENCE_END = "。！？!?；;…\n"
+        private const val TILDES = "～~"
         private const val PAUSE = "，,、：:"
         private const val CLOSERS = "”’\"')）】」』"
 
@@ -88,6 +92,8 @@ object SpeechText {
     private val HEADING = Regex("(?m)^\\s*#{1,6}\\s*")
     private val BULLET = Regex("(?m)^\\s*([-*•]|\\d+[.)、])\\s+")
     private val SPACES = Regex("[ \\t]+")
+    private val RANGE = Regex("(\\d)\\s*[~～]+\\s*(?=\\d)")
+    private val TILDE = Regex("\\s*[~～]+\\s*")
 
     fun clean(text: String): String {
         var t = URL.replace(text, "")
@@ -95,7 +101,10 @@ object SpeechText {
         t = HEADING.replace(t, "")
         t = BULLET.replace(t, "")
         t = stripEmoji(t)
-        return SPACES.replace(t, " ").trim()
+        // engines read a tilde oddly or as a symbol: "3～5" is "3到5", otherwise it's a pause
+        t = RANGE.replace(t, "$1到")
+        t = TILDE.replace(t, "，")
+        return SPACES.replace(t, " ").trim().trim('，').trim()
     }
 
     /** anything a voice would say (not only punctuation / symbols) */

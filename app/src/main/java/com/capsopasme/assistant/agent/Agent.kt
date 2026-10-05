@@ -187,6 +187,7 @@ class Agent(
                     rollback(userIndex)
                     return
                 }
+                var hangingUp = false
                 for (call in reply.toolCalls) {
                     listener.onToolRunning(call.name)
                     val result = if (isCompanion && call.name !in Tools.COMPANION_TOOLS) {
@@ -197,7 +198,7 @@ class Agent(
                     }
                     if (isOk(result)) {
                         acted = true
-                        okResultText(result)?.let { okResults.add(it) }
+                        if (call.name == "hang_up") hangingUp = true else okResultText(result)?.let { okResults.add(it) }
                     }
                     messages.put(JSONObject()
                         .put("role", "tool")
@@ -209,6 +210,12 @@ class Agent(
                     val text = reply.text.ifBlank { okResults.joinToString("，") }
                     listener.onFinished(text, ArrayList(launches), true)
                     launches.clear()
+                    return
+                }
+                if (hangingUp) {
+                    // the goodbye came with the hang-up (or a default one is said): another round
+                    // would only make the model say goodbye a second time
+                    listener.onFinished(reply.text.ifBlank { HANG_UP_FAREWELL }, emptyList(), true)
                     return
                 }
                 // the session was cancelled while the tools ran: nobody wants the summary
@@ -370,7 +377,7 @@ class Agent(
             - 需要最新信息（新闻、比分、行情、最近发生的事）或拿不准的事实时，用 search_web 搜一下；摘要不够时用 read_webpage 读最相关的一条。搜之前先简短说一句（比如“噜噜帮你查一下”），免得对方干等。搜到后用一两句自己的话说要点，不念网址和来源列表。
             - 问天气用 get_weather。
             - 这个通话里你只陪聊，不能操作手机（设闹钟、打电话、发消息、打开应用、放音乐、调开关都做不了）。对方让你做这些时，温和地说明，并告诉对方可以说“切回助手”，让语音助手去办。
-            - 对方明确要结束通话（再见、晚安、先聊到这、挂了吧）时调用 hang_up，同时说一句简短温暖的道别。
+            - 对方明确要结束通话（再见、晚安、先聊到这、挂了吧）时调用 hang_up，并在同一条回复里说一句简短温暖的道别（调用之后就挂断了，不会再轮到你说话）。
             - 被问到时可以坦诚自己是 AI，一只 AI 小猪，但不用主动强调，也不说“作为一个 AI”这种套话。
         """.trimIndent()
 
@@ -383,6 +390,9 @@ class Agent(
             - 对方问你都记得他什么时，挑重点如实说，并告诉他可以说“忘掉某某事”让你删掉，也可以在设置里查看和管理。
         """.trimIndent()
         private const val MAX_ROUNDS = 6
+
+        /** said when the model hung up without a word */
+        private const val HANG_UP_FAREWELL = "好的，那噜噜先挂啦，拜拜。"
 
         /** messages kept besides the system prompt (about ten exchanges with tool calls) */
         private const val MAX_HISTORY = 40

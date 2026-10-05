@@ -44,7 +44,11 @@ class LlmClient {
         val assistantMessage: JSONObject,
     )
 
-    class LlmException(message: String, val httpCode: Int = 0) : IOException(message)
+    /**
+     * @param permanent the same request would fail again (refused by moderation, output cut off):
+     * not worth retrying as is
+     */
+    class LlmException(message: String, val httpCode: Int = 0, val permanent: Boolean = false) : IOException(message)
 
     @Volatile
     private var connection: HttpURLConnection? = null
@@ -60,9 +64,16 @@ class LlmClient {
     }
 
     /**
+     * @param maxTokens the output budget (Gemini counts its thinking in it too)
      * @param onText receives each streamed text delta (worker thread)
      */
-    fun chat(provider: Provider, messages: JSONArray, tools: JSONArray, onText: (String) -> Unit): Reply {
+    fun chat(
+        provider: Provider,
+        messages: JSONArray,
+        tools: JSONArray,
+        maxTokens: Int = DEFAULT_MAX_TOKENS,
+        onText: (String) -> Unit,
+    ): Reply {
         val body = JSONObject().apply {
             put("model", provider.model)
             put("messages", messages)
@@ -84,7 +95,7 @@ class LlmClient {
                 Kind.Gemini -> put("reasoning_effort", "low")
             }
             // Gemini counts thinking tokens against this budget too
-            put("max_tokens", 2048)
+            put("max_tokens", maxTokens)
         }
         if (cancelled) throw LlmException("已取消")
         val conn = URL(provider.url).openConnection() as HttpURLConnection
@@ -187,11 +198,11 @@ class LlmClient {
         }
         if (text.isBlank() && toolCalls.isEmpty()) {
             // e.g. GLM "sensitive", or the thinking used up max_tokens: don't pretend it worked
-            throw LlmException(when (finishReason) {
-                "sensitive", "content_filter" -> "${provider.label} 拒绝回答（内容审核）"
-                "length" -> "${provider.label} 输出被截断，没有得到回答"
-                else -> "${provider.label} 没有返回内容${if (finishReason.isNotEmpty()) "（$finishReason）" else ""}"
-            })
+            throw when (finishReason) {
+                "sensitive", "content_filter" -> LlmException("${provider.label} 拒绝回答（内容审核）", permanent = true)
+                "length" -> LlmException("${provider.label} 输出被截断，没有得到回答", permanent = true)
+                else -> LlmException("${provider.label} 没有返回内容${if (finishReason.isNotEmpty()) "（$finishReason）" else ""}")
+            }
         }
         val message = JSONObject().apply {
             put("role", "assistant")
@@ -245,4 +256,9 @@ class LlmClient {
 
     private fun JSONObject.optStringOrNull(key: String): String? =
         if (has(key) && !isNull(key)) optString(key) else null
+
+    companion object {
+        /** short spoken / on-card answers */
+        const val DEFAULT_MAX_TOKENS = 2048
+    }
 }

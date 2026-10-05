@@ -246,6 +246,31 @@ object MemoryStore {
         AtomicFile(file).delete()
     }
 
+    /**
+     * The distiller's result for the call in [file], applied and the call removed from the
+     * waiting ones, together.
+     * @return false if the call was cleared meanwhile (memory cleared or turned off): nothing kept
+     */
+    @Synchronized
+    fun applyPending(ctx: Context, file: File, add: List<String>, update: Map<Int, String>, delete: Collection<Int>, summary: String?, time: Long): Boolean {
+        if (!file.exists()) return false
+        apply(ctx, add, update, delete, summary, time)
+        deletePending(file)
+        return true
+    }
+
+    /** one more failed attempt at distilling the call in [file]; @return how many so far */
+    @Synchronized
+    fun noteFailure(file: File): Int = try {
+        val o = JSONObject(AtomicFile(file).readFully().toString(Charsets.UTF_8))
+        val tries = o.optInt("tries") + 1
+        write(file, o.put("tries", tries).toString())
+        tries
+    } catch (e: Exception) {
+        // gone or unreadable: nothing left to retry
+        Int.MAX_VALUE
+    }
+
     // ---------------------------------------------------------------------------------------------
 
     private fun pendingDir(ctx: Context) = File(ctx.filesDir, PENDING_DIR)
