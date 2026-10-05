@@ -86,8 +86,8 @@ def render(style, enter, t, has_world=True):
                 fbGraded=0.5 if style == 'freeze' else 1.0)
     vals.update(frame(style, enter, t, R))
     for k, v in vals.items():
-        b.uniform(k).set(v if isinstance(v, list) else float(v))
-    b.child('world').set(world.makeShader(skia.TileMode.kClamp, skia.TileMode.kClamp))
+        b.setUniform(k, v if isinstance(v, list) else float(v))
+    b.setChild('world', world.makeShader(skia.TileMode.kClamp, skia.TileMode.kClamp))
     shader = b.makeShader()
     surf = skia.Surface(W, H)
     c = surf.getCanvas()

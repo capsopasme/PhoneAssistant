@@ -5,6 +5,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -18,3 +20,11 @@ jobs:
         with:
           name: agsl-frames
           path: agsl_frames.png
+      # also onto the branch: artifacts may not be downloadable from where this is checked
+      - name: Commit the frames
+        if: always()
+        run: |
+          [ -f agsl_frames.png ] || exit 0
+          git config user.name ci && git config user.email ci@users.noreply.github.com
+          mkdir -p .github/agsl && cp agsl_frames.png .github/agsl/
+          git add .github/agsl/agsl_frames.png && git commit -m "frames [skip ci]" && git push
