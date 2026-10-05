@@ -18,15 +18,28 @@ import java.util.Locale
  *
  * [ask] blocks: run it on a worker thread. Listener callbacks come from that thread.
  *
- * @param voice voice call: the answers are read aloud ([systemPrompt]) and the model gets the
- * hang_up tool
+ * @param mode the digital assistant of the sheet, or the chat companion of the voice call
  */
 class Agent(
     private val context: Context,
     private val ui: UiHost,
     private val listener: Listener,
-    private val voice: Boolean = false,
+    private val mode: Mode = Mode.Assistant,
 ) {
+    enum class Mode {
+        /** the sheet: operates the phone with tools, answers in a line or two on the card */
+        Assistant,
+
+        /**
+         * the voice call: a warm, patient chat partner (like 豆包's call) whose answers are read
+         * aloud. It can search the web and check the weather, and hang up; it doesn't operate the
+         * phone, and "打开 xx" / "关掉蓝牙" aren't run locally either.
+         */
+        Companion,
+    }
+
+    private val isCompanion get() = mode == Mode.Companion
+
     interface UiHost {
         fun confirm(question: String): Boolean
 
@@ -126,7 +139,7 @@ class Agent(
         }
 
         // "打开 xx" / "倒计时 xx" / "关掉蓝牙": done on the phone, no model round trip
-        val local = try {
+        val local = if (isCompanion) null else try {
             LocalCommands.parse(context, question)
         } catch (e: Exception) {
             Log.w(TAG, "local command failed", e)
@@ -150,7 +163,7 @@ class Agent(
         val okResults = ArrayList<String>()
         try {
             repeat(MAX_ROUNDS) {
-                val reply = client.chat(provider, messages, Tools.schemasFor(voice)) { delta -> listener.onText(delta) }
+                val reply = client.chat(provider, messages, Tools.schemasFor(isCompanion)) { delta -> listener.onText(delta) }
                 if (client.cancelled) {
                     rollback(userIndex)
                     return
@@ -167,7 +180,12 @@ class Agent(
                 }
                 for (call in reply.toolCalls) {
                     listener.onToolRunning(call.name)
-                    val result = tools.execute(call.name, call.arguments)
+                    val result = if (isCompanion && call.name !in Tools.COMPANION_TOOLS) {
+                        // a tool the model made up from earlier knowledge: the companion only chats
+                        JSONObject().put("ok", false).put("error", "通话模式下只陪聊，不能操作手机").toString()
+                    } else {
+                        tools.execute(call.name, call.arguments)
+                    }
                     if (isOk(result)) {
                         acted = true
                         okResultText(result)?.let { okResults.add(it) }
@@ -281,21 +299,7 @@ class Agent(
         promptMinute = now.format(MINUTE)
         val time = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm EEEE", Locale.CHINA))
         val city = prefs.defaultCity.ifBlank { "未设置" }
-        if (voice) return """
-            你是运行在用户安卓手机（一加 Ace 5，LineageOS，已 root）上的语音助手，现在正和用户语音通话。用户的话来自语音识别，可能有同音错字，按最合理的意思理解；你的回复会被语音合成直接读出来。
-            现在是 $time（时区 ${now.zone.id}）。默认城市：$city。
-            规则：
-            - 像打电话聊天一样自然、口语化，默认一到三句话；用户要你详细讲（讲故事、解释原理）时可以长一些，但用短句。
-            - 只输出要读出来的话：不用 Markdown、列表、表情符号、网址、代码，数字和单位写成读得顺的样子。
-            - 能用工具完成的操作就直接调用工具，不要只给建议；一句话里有多个操作就依次调用多个工具；完成后一句话说结果。
-            - 工具返回 ok=false 时如实说明原因；需要用户补充或选择时直接简短地问，用户会接着说。
-            - 打开别的应用、导航、放音乐、打电话、网页搜索执行后通话会自动结束，简短确认一句就行。
-            - 用户想结束通话（再见、没事了、挂了吧）时调用 hang_up，并简短道别。
-            - 播放音乐用 play_music；继续/暂停/切歌用 media_control。
-            - 知识类问题直接回答；不确定或需要最新信息时如实说明。
-            - 不要编造工具没有返回的信息（如天气、电量、联系人号码）。
-            - 相对时间（明天、半小时后、下周一）按当前时间换算成具体时间再调用工具。
-        """.trimIndent()
+        if (isCompanion) return companionPrompt(time, now, city)
         return """
             你是运行在用户安卓手机（一加 Ace 5，LineageOS，已 root）上的语音助手。用户的话来自语音识别，可能有同音错字，按最合理的意思理解。
             现在是 $time（时区 ${now.zone.id}）。默认城市：$city。
@@ -309,6 +313,27 @@ class Agent(
             - 相对时间（明天、半小时后、下周一）按当前时间换算成具体时间再调用工具。
         """.trimIndent()
     }
+
+    private fun companionPrompt(time: String, now: ZonedDateTime, city: String) = """
+        你是用户的语音聊天伙伴，现在正和用户打语音电话。你说的话会被语音合成直接读出来；用户的话来自语音识别，可能有同音错字，按最合理的意思理解，不用指出或纠正。
+        现在是 $time（时区 ${now.zone.id}）。用户所在城市：$city。
+
+        你是什么样的：
+        - 像一个温和、亲切、有耐心的老朋友在打电话：自然、口语化、有温度，不端着，不说教，不打官腔，也不过分热情或奉承。
+        - 懂倾听：先接住对方话里的感受和重点，再说你的想法。对方心情不好时，先表达理解和陪伴，别急着讲道理、别一上来就给一堆建议；对方想听建议时，给一两个最实在的就好。
+        - 话要短：通常一到三句话、几十个字，像真人打电话一样一来一回，把说话的机会留给对方。对方明确想听你多讲（讲个故事、解释一件事）时可以长一点，但也用短句，讲完一段就停下来。
+        - 偶尔自然地追问一句，让对方愿意接着说；但不要每次都用问题结尾，也不要连着问好几个问题。
+        - 可以有自己的看法和一点幽默，可以用“嗯”“是呀”“哈哈”这类口语，但别堆语气词。
+        - 记住这次通话里对方说过的事，后面自然地接上，不要重复问已经说过的事。
+        - 只说要读出来的话：不用 Markdown、列表、编号、表情符号、颜文字、网址和代码；数字、日期、单位写成读起来顺口的样子。
+
+        工具和边界：
+        - 需要最新信息（新闻、比分、行情、最近发生的事）或拿不准的事实时，用 search_web 搜一下；摘要不够时用 read_webpage 读最相关的一条。搜之前先简短说一句（比如“我帮你查一下”），免得对方干等。搜到后用一两句自己的话说要点，不念网址和来源列表。
+        - 问天气用 get_weather。
+        - 这个通话里你只陪聊，不能操作手机（设闹钟、打电话、发消息、打开应用、放音乐、调开关都做不了）。对方让你做这些时，温和地说明，并告诉他可以说“退出通话”，再让语音助手去办。
+        - 对方明确要结束通话（再见、晚安、先聊到这、挂了吧）时调用 hang_up，同时说一句简短温暖的道别。
+        - 不编造事实，不知道就坦白说不知道。被问到时可以坦诚自己是 AI，但不用主动强调，也不说“作为一个 AI”这种套话。
+    """.trimIndent()
 
     companion object {
         private const val TAG = "Agent"

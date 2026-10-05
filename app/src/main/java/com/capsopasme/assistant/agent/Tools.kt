@@ -79,6 +79,8 @@ class Tools(private val ctx: Context, private val host: Host) {
                 "navigate" -> navigate(a)
                 "open_app" -> openApp(a)
                 "web_search" -> webSearch(a)
+                "search_web" -> searchWeb(a)
+                "read_webpage" -> readWebpage(a)
                 "get_weather" -> getWeather(a)
                 "play_music" -> playMusic(a)
                 "media_control" -> mediaControl(a)
@@ -308,6 +310,24 @@ class Tools(private val ctx: Context, private val host: Host) {
             else -> url
         }
         return launchOrError(intent, "搜索“$q”")
+    }
+
+    /** the call companion's search: results come back to the model, nothing opens */
+    private fun searchWeb(a: JSONObject): String {
+        val q = a.optString("query").trim().ifEmpty { return err("缺少搜索词") }
+        val results = WebSearch.search(q)
+        if (results.isEmpty()) return err("没有搜到“$q”的结果，可以换个说法再搜")
+        val arr = JSONArray()
+        results.forEach { arr.put(JSONObject().put("title", it.title).put("snippet", it.snippet).put("url", it.url)) }
+        return ok(JSONObject().put("query", q).put("results", arr)
+            .put("note", "用自己的话口语化转述要点，不要念网址；摘要不够时可以用 read_webpage 看最相关的一条"))
+    }
+
+    private fun readWebpage(a: JSONObject): String {
+        val url = a.optString("url").trim().ifEmpty { return err("缺少网址") }
+        val (title, text) = WebSearch.read(url)
+        if (text.isBlank()) return err("这个网页没有读到正文（可能需要登录或是动态页面）")
+        return ok(JSONObject().put("title", title).put("text", text))
     }
 
     private fun getWeather(a: JSONObject): String {
@@ -766,12 +786,21 @@ class Tools(private val ctx: Context, private val host: Host) {
         private const val MUSIC_MIN_SCORE = 0.6
         private const val ALREADY = "__ALREADY__"
 
-        /** the tools for a sheet session, or for a voice call (+ hang_up) */
-        fun schemasFor(voice: Boolean): JSONArray = if (voice) callSchemas else schemas
+        /** the tools of the assistant sheet, or of the call companion (chat only, see [companionSchemas]) */
+        fun schemasFor(companion: Boolean): JSONArray = if (companion) companionSchemas else schemas
 
-        private val callSchemas: JSONArray by lazy {
-            JSONArray(schemas.toString()).apply {
-                fn("hang_up", "结束这次语音通话（用户说再见、没事了、挂了吧等时调用），回复里简短道别", props())
+        /** what the call companion may do: look things up and end the call, never operate the phone */
+        val COMPANION_TOOLS = setOf("search_web", "read_webpage", "get_weather", "hang_up")
+
+        private val companionSchemas: JSONArray by lazy {
+            JSONArray().apply {
+                fn("search_web", "上网搜索，返回搜索结果的标题和摘要。需要最新信息（新闻、比分、行情、近期的事）或拿不准的事实时用",
+                    props("query" to str("搜索词，简洁明确，必要时带上时间或地点")), "query")
+                fn("read_webpage", "打开一个网页读取正文（search_web 的摘要不够时，读最相关的一条结果）",
+                    props("url" to str("网址，来自 search_web 的结果")), "url")
+                fn("get_weather", "查天气（实时和未来几天）",
+                    props("city" to str("城市名，可选，不填用默认城市"), "days" to int("预报天数 1-7，默认 1")))
+                fn("hang_up", "结束这次语音通话。只在用户明确想结束（再见、晚安、先聊到这、挂了吧）时调用，同时简短温暖地道别", props())
             }
         }
 

@@ -5,9 +5,12 @@
     android:layout_height="match_parent"
     android:fillViewport="true">
 
+    <!-- focusable itself: takes the initial focus, so no field (and no keyboard) is active on open -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
         android:orientation="vertical"
         android:padding="20dp">
 
@@ -18,6 +21,56 @@
             android:textColor="@color/text_primary"
             android:textSize="26sp"
             android:textStyle="bold" />
+
+        <!-- voice call entry -->
+        <LinearLayout
+            android:id="@+id/callEntry"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_call_entry"
+            android:clickable="true"
+            android:contentDescription="开始语音通话"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="14dp">
+
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_call_entry_icon"
+                android:importantForAccessibility="no"
+                android:padding="11dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_call"
+                android:tint="@android:color/white" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="语音通话"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/callEntrySub"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="像打电话一样陪你聊天"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <!-- entry -->
         <TextView style="@style/SectionTitle" android:text="唤起方式" />
@@ -168,7 +221,7 @@
 
         <TextView
             style="@style/Hint"
-            android:text="像打电话一样连续对话：它说完你接着说，不用每次唤起。卡片右上角的电话按钮、说“进入通话模式”或“陪我聊聊”、长按桌面图标选“语音通话”都能进入；QuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.CALL。熄屏照常进行，挂断、很久没人说话或来电时结束。" />
+            android:text="像打电话一样和一个温和耐心的聊天伙伴连续聊天：它说完你接着说，回答简短，能帮你上网查最新消息，但不操作手机（设闹钟、开关这些请用语音助手卡片）。\n进入：本页顶部的“语音通话”、卡片右上角的电话按钮、在卡片里说“进入通话模式”或“陪我聊聊”、长按桌面图标选“语音通话”；QuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.CALL。\n退出：说“退出通话”“挂了吧”“拜拜”“晚安”，说“切回助手”会挂断并打开助手卡片。熄屏照常进行，很久没人说话或来电时自动结束。" />
 
         <TextView style="@style/Label" android:text="朗读用的语音合成（系统首选 TTS 引擎）" />
 

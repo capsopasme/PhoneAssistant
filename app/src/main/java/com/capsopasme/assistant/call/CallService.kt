@@ -26,6 +26,7 @@ import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.AudioCapture
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.asr.joinText
+import com.capsopasme.assistant.ui.AssistActivity
 import com.capsopasme.assistant.ui.MediaSilencer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -33,9 +34,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The voice call: a turn-taking (half-duplex) conversation. Listen until the user pauses, ask
- * the model, speak the answer through the system TTS engine sentence by sentence as it streams
- * in, then listen again. The microphone is closed while the answer plays, so the assistant never
+ * The voice call: a turn-taking (half-duplex) conversation with a chat companion (warm, patient,
+ * short answers; it can search the web but doesn't operate the phone, see [Agent.Mode.Companion]).
+ * Listen until the user pauses, ask the model, speak the answer through the system TTS engine
+ * sentence by sentence as it streams in, then listen again. The microphone is closed while the answer plays, so the assistant never
  * hears itself; tapping interrupts it.
  *
  * A foreground service of type microphone, started from the visible call screen: the call goes
@@ -196,9 +198,12 @@ class CallService : Service() {
     private var confirmRetried = false
 
     /** what happens once the queued speech has played */
-    private enum class After { Nothing, TurnEnd, ConfirmListen, Goodbye }
+    private enum class After { Nothing, TurnEnd, ConfirmListen, Relisten, Goodbye }
 
     private var after = After.Nothing
+
+    /** the goodbye being said is for "切回助手": open the assistant sheet after it */
+    private var goodbyeToAssistant = false
 
     // ---------------------------------------------------------------------------------------------
     // lifecycle
@@ -237,11 +242,13 @@ class CallService : Service() {
         releaseAll(resume = true)
         main.removeCallbacksAndMessages(null)
         running = false
+        inCall = false
         super.onDestroy()
     }
 
     private fun startCall() {
         started = true
+        inCall = true
         startedAt = SystemClock.elapsedRealtime()
         // first: a foreground service that doesn't call this in time gets the app killed
         try {
@@ -581,8 +588,15 @@ class CallService : Service() {
         val full = joinText(prefix, text.trim())
         userText = full
         userPartial = false
-        if (VoiceReplies.isHangUp(full)) {
-            goodbye("好的，再见。")
+        // "挂了吧" "退出通话" "拜拜" "晚安" "切回助手": parsed here, no model round trip. The whole
+        // turn must be the command ("我跟你说个事…" + "算了拜拜" goes to the model)
+        val exit = CallCommands.parseExit(full)
+        if (exit != null) {
+            goodbye(exit.farewell, toAssistant = exit.toAssistant)
+            return
+        }
+        if (CallCommands.isEnter(full)) {
+            sayAndListen("我们已经在通话啦，想聊什么都可以。")
             return
         }
         startTurn(full)
@@ -709,7 +723,7 @@ class CallService : Service() {
                 main.post { onTurnError(id, message) }
             }
         }
-        return Agent(this, uiHost, listener, voice = true).also { agent = it }
+        return Agent(this, uiHost, listener, Agent.Mode.Companion).also { agent = it }
     }
 
     private fun current(id: Int): Turn? = turn?.takeIf { it.id == id && !ended }
@@ -831,14 +845,39 @@ class CallService : Service() {
         when (a) {
             After.TurnEnd -> turn?.let { if (it.finished) finishTurn(it) }
             After.ConfirmListen -> if (confirmLatch != null) startListening(Listen.Confirm, cue = true)
-            After.Goodbye -> end(emptyList())
+            After.Relisten -> if (turn == null) startListening(Listen.Normal, cue = true)
+            After.Goodbye -> {
+                // the sheet can only open over a visible screen; otherwise just hang up
+                val toSheet = goodbyeToAssistant && uiVisible && power.isInteractive
+                end(if (toSheet) listOf(assistantIntent()) else emptyList())
+            }
             After.Nothing -> {}
         }
     }
 
-    /** say [text], then hang up */
-    private fun goodbye(text: String) {
+    private fun assistantIntent() = Intent(this, AssistActivity::class.java)
+        .setAction(AssistActivity.ACTION_START)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** a reply made on the phone (no model): say it, then listen again */
+    private fun sayAndListen(text: String) {
         if (ended) return
+        stopListening()
+        listenMode = Listen.Normal
+        prefix = ""
+        answer = text
+        answerIsError = false
+        status = ""
+        phase = Phase.Speaking
+        render()
+        speaker.speak(text)
+        afterSpeech(After.Relisten)
+    }
+
+    /** say [text], then hang up ([toAssistant]: and open the assistant sheet) */
+    private fun goodbye(text: String, toAssistant: Boolean = false) {
+        if (ended) return
+        goodbyeToAssistant = toAssistant
         stopListening()
         listenMode = Listen.Normal
         turn?.let { agent?.interrupt(it.id) }
@@ -989,6 +1028,7 @@ class CallService : Service() {
     private fun end(launches: List<Intent>, reason: String? = null) {
         if (ended) return
         ended = true
+        inCall = false
         phase = Phase.Ended
         main.removeCallbacksAndMessages(null)
         stopListening()
@@ -1145,6 +1185,14 @@ class CallService : Service() {
         /** a call is going on (this process): the sheet hands over to it, no second call starts */
         @Volatile
         var running = false
+            private set
+
+        /**
+         * the call is on (not yet ended): the microphone is busy. False already while an ended
+         * call releases the audio, so the sheet can open right after "切回助手"
+         */
+        @Volatile
+        var inCall = false
             private set
 
         /** hard limit of one call */

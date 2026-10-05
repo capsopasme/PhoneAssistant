@@ -25,6 +25,7 @@ import com.capsopasme.assistant.agent.RootShell
 import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.asr.SpeechModel
+import com.capsopasme.assistant.call.CallActivity
 import com.capsopasme.assistant.call.CallService
 import com.capsopasme.assistant.llm.LlmClient
 
@@ -50,6 +51,7 @@ class SettingsActivity : Activity() {
     private lateinit var callIdle: EditText
     private lateinit var callCue: Switch
     private lateinit var callHeadsetMic: Switch
+    private lateinit var callEntrySub: TextView
 
     private var testClient: AsrClient? = null
     private var testTts: TextToSpeech? = null
@@ -87,6 +89,7 @@ class SettingsActivity : Activity() {
         callIdle = findViewById(R.id.callIdle)
         callCue = findViewById(R.id.callCue)
         callHeadsetMic = findViewById(R.id.callHeadsetMic)
+        callEntrySub = findViewById(R.id.callEntrySub)
 
         deepseekKey.setText(prefs.deepseekKey)
         deepseekModel.setText(prefs.deepseekModel.takeIf { it != Prefs.DEFAULT_DEEPSEEK_MODEL } ?: "")
@@ -132,6 +135,13 @@ class SettingsActivity : Activity() {
         group.setOnCheckedChangeListener { g, checkedId ->
             prefs.speechModel = g.findViewById<View>(checkedId).tag as SpeechModel
             renderModel()
+        }
+
+        // starts the call, or goes back to the one going on
+        findViewById<View>(R.id.callEntry).setOnClickListener {
+            startActivity(
+                Intent(this, CallActivity::class.java).setAction(CallActivity.ACTION_CALL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         }
 
         findViewById<Button>(R.id.roleRoot).setOnClickListener {
@@ -196,6 +206,7 @@ class SettingsActivity : Activity() {
         renderPerms()
         renderModel()
         renderTts()
+        callEntrySub.text = if (CallService.inCall) "通话中，点按回到通话" else "像打电话一样陪你聊天"
     }
 
     override fun onPause() {

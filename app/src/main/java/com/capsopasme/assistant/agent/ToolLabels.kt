@@ -24,6 +24,8 @@ object ToolLabels {
         "screen_off" to "锁屏",
         "get_device_status" to "查询状态",
         "hang_up" to "挂断",
+        "search_web" to "搜索",
+        "read_webpage" to "看网页",
     )
 
     fun status(tool: String): String = LABELS[tool]?.let { "正在$it…" } ?: "正在执行…"

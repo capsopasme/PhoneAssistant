@@ -37,8 +37,8 @@ import com.capsopasme.assistant.asr.AsrClient
 import com.capsopasme.assistant.asr.AudioCapture
 import com.capsopasme.assistant.asr.ModelManager
 import com.capsopasme.assistant.call.CallActivity
+import com.capsopasme.assistant.call.CallCommands
 import com.capsopasme.assistant.call.CallService
-import com.capsopasme.assistant.call.VoiceReplies
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -180,7 +180,7 @@ class AssistActivity : Activity() {
         // no window animation: the sheet slides itself in and out (see playEnter / dismiss)
         overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
-        if (CallService.running) {
+        if (CallService.inCall) {
             // a voice call is going on: its microphone is busy, show the call instead
             destroyed = true
             startActivity(Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -404,7 +404,8 @@ class AssistActivity : Activity() {
     }
 
     private fun ask(question: String) {
-        if (VoiceReplies.isStartCall(question)) {
+        // "进入通话模式" / "陪我聊聊" / "童话模式": parsed here, no model round trip
+        if (CallCommands.isEnter(question)) {
             startCall()
             return
         }
