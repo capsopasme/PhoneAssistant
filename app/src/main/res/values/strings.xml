@@ -3,4 +3,8 @@
     <string name="app_name">语音助手</string>
     <string name="shortcut_call">和噜噜通话</string>
     <string name="shortcut_call_long">和噜噜语音通话</string>
+    <string name="shortcut_assist">语音助手</string>
+    <string name="shortcut_assist_long">唤出语音助手</string>
+    <string name="tile_assist">语音助手</string>
+    <string name="tile_call">和噜噜通话</string>
 </resources>

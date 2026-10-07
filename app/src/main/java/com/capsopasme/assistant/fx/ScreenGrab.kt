@@ -23,6 +23,9 @@ object ScreenGrab {
     private const val RGBA_8888 = 1
     private const val RGBX_8888 = 2
 
+    /** 10 bits per colour, 2 of alpha, also 4 bytes: wide-colour / 10-bit display modes (ColorOS) */
+    private const val RGBA_1010102 = 43
+
     class Shot(
         /** full resolution */
         val full: Bitmap,
@@ -67,12 +70,13 @@ object ScreenGrab {
             val ht = h.getInt(4)
             val format = h.getInt(8)
             val sizeOk = w == width && ht == height || w == height && ht == width
-            if (!sizeOk || format != RGBA_8888 && format != RGBX_8888) {
+            if (!sizeOk || format != RGBA_8888 && format != RGBX_8888 && format != RGBA_1010102) {
                 Log.w(TAG, "unexpected frame ${w}x$ht format $format (display ${width}x$height)")
                 return null
             }
             val data = ByteArray(w * ht * 4)
             input.readFully(data)
+            if (format == RGBA_1010102) to8888(data)
             if (looksBlack(data, w, ht)) {
                 Log.i(TAG, "black frame (secure window?)")
                 return null
@@ -96,6 +100,20 @@ object ScreenGrab {
             soft?.recycle()
             killer.interrupt()
             p.destroy()
+        }
+    }
+
+    /** RGBA_1010102 (little-endian words: R bits 0-9, G 10-19, B 20-29) to RGBA_8888, in place */
+    private fun to8888(data: ByteArray) {
+        var i = 0
+        while (i < data.size) {
+            val v = (data[i].toInt() and 0xFF) or ((data[i + 1].toInt() and 0xFF) shl 8) or
+                    ((data[i + 2].toInt() and 0xFF) shl 16) or ((data[i + 3].toInt() and 0xFF) shl 24)
+            data[i] = ((v ushr 2) and 0xFF).toByte()
+            data[i + 1] = ((v ushr 12) and 0xFF).toByte()
+            data[i + 2] = ((v ushr 22) and 0xFF).toByte()
+            data[i + 3] = 0xFF.toByte()
+            i += 4
         }
     }
 

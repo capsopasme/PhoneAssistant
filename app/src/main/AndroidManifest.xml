@@ -109,6 +109,32 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Quick Settings tiles: a way in on every ROM (ColorOS has no corner swipe for the
+          assistant). Bound by the system only while the panel shows them.
+        -->
+        <service
+            android:name=".ui.AssistTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_assist"
+            android:label="@string/tile_assist"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".ui.CallTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_call"
+            android:label="@string/tile_call"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- what 噜噜 remembers: view and delete -->
         <activity
             android:name=".ui.MemoryActivity"

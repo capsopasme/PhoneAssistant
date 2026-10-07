@@ -30,6 +30,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.exp
 import kotlin.math.roundToInt
 
@@ -636,14 +637,14 @@ class Tools(private val ctx: Context, private val host: Host) {
     // tier 2: root
 
     /**
-     * Brightness percent as the system slider shows it (gamma space) to the 0-255 setting,
-     * same HLG curve as AOSP BrightnessUtils.convertGammaToLinearFloat.
+     * Brightness percent as the system slider shows it (gamma space) to a linear fraction of the
+     * brightness range, same HLG curve as AOSP BrightnessUtils.convertGammaToLinearFloat.
      */
-    private fun sliderPercentToSetting(percent: Int): Int {
+    private fun sliderPercentToLinear(percent: Int): Float {
         val v = percent.coerceIn(0, 100) / 100f
         val r = 0.5f
         val hlg = if (v <= r) (v / r) * (v / r) else exp((v - 0.55991073f) / 0.17883277f) + 0.28466892f
-        return (1 + (hlg.coerceIn(0f, 12f) / 12f) * 254).roundToInt().coerceIn(1, 255)
+        return hlg.coerceIn(0f, 12f) / 12f
     }
 
     private fun setBrightness(a: JSONObject): String {
@@ -652,9 +653,15 @@ class Tools(private val ctx: Context, private val host: Host) {
         }
         if (!a.has("percent")) return err("需要 percent 或 auto")
         val p = a.optInt("percent").coerceIn(0, 100)
-        val value = sliderPercentToSetting(p)
+        val linear = sliderPercentToLinear(p)
+        // through the display service (a 0-1 float): OEM ROMs such as ColorOS use a wider range
+        // than AOSP's 0-255 for the screen_brightness setting, so writing it directly would land
+        // on the wrong level there. The setting stays as the fallback for older systems.
+        val f = "%.4f".format(Locale.ROOT, MIN_BRIGHTNESS + (1f - MIN_BRIGHTNESS) * linear)
+        val legacy = (1 + linear * 254).roundToInt().coerceIn(1, 255)
         return rootAction(
-            "settings put system screen_brightness_mode 0 && settings put system screen_brightness $value",
+            "settings put system screen_brightness_mode 0 && " +
+                    "{ cmd display set-brightness $f 2>/dev/null || settings put system screen_brightness $legacy; }",
             "亮度已调到 $p%"
         )
     }
@@ -678,8 +685,13 @@ class Tools(private val ctx: Context, private val host: Host) {
     private fun toggle(setting: String, on: Boolean, confirmRisky: Boolean): String {
         val en = if (on) "enable" else "disable"
         val bit = if (on) 1 else 0
+        // a switch learned from this phone's own Quick Settings tile (ColorOS 护眼 / 省电…)
+        LearnedSwitches.get(ctx, setting)?.let { learned ->
+            val label = LearnedSwitches.LEARNABLE[setting] ?: setting
+            return toggleLearned(label, learned, on)
+        }
         val (command, label) = when (setting) {
-            "wifi" -> "svc wifi $en" to "WiFi"
+            "wifi" -> "svc wifi $en || cmd wifi set-wifi-enabled ${if (on) "enabled" else "disabled"}" to "WiFi"
             "bluetooth" -> "svc bluetooth $en || cmd bluetooth_manager $en" to "蓝牙"
             "mobile_data" -> "svc data $en" to "移动数据"
             "airplane_mode" -> "cmd connectivity airplane-mode $en" to "飞行模式"
@@ -709,14 +721,40 @@ class Tools(private val ctx: Context, private val host: Host) {
         }
         val done = "$label 已${if (on) "打开" else "关闭"}"
         val query = stateQuery(setting) ?: return rootAction(command, done)
-        // one su call: read the current state, switch only if it differs
+        // one su call: read the current state, switch only if it differs, then check that the
+        // system really followed (bluetooth takes a moment; a command an OEM ROM ignores doesn't)
         val r = RootShell.run(
-            "s=\$($query 2>/dev/null); case \"\$s\" in *yes*|1|2) c=1;; *no*|0) c=0;; *) c=x;; esac; " +
-                    "if [ \"\$c\" = $bit ]; then echo $ALREADY; else $command; fi"
+            "st() { s=\$($query 2>/dev/null); case \"\$s\" in *yes*|1|2) c=1;; *no*|0) c=0;; *) c=x;; esac; }; " +
+                    "st; if [ \"\$c\" = $bit ]; then echo $ALREADY; exit 0; fi; " +
+                    "$command; rc=\$?; i=0; " +
+                    "while [ \$i -lt 25 ]; do st; if [ \"\$c\" = $bit ]; then echo $CHANGED; exit 0; fi; sleep 0.2; i=\$((i+1)); done; " +
+                    "echo $UNCHANGED; exit \$rc",
+            10_000
+        )
+        val detail = r.output.lines().filterNot { it.contains("__") }.joinToString(" ").trim().take(160)
+        return when {
+            r.output.contains(ALREADY) -> ok("$label 本来就是${if (on) "开" else "关"}着的")
+            r.output.contains(CHANGED) -> ok(done)
+            r.output.contains(UNCHANGED) -> err(
+                "已经发出${if (on) "打开" else "关闭"}${label}的指令，但几秒内系统里没看到它变过来" +
+                        (if (detail.isNotEmpty()) "（$detail）" else "") +
+                        (if (setting in LearnedSwitches.LEARNABLE) "；可以在助手设置的“系统开关适配”里教它一次" else "")
+            )
+            else -> err("执行失败（${r.code}）：${detail.ifEmpty { "可能没有授予 root" }}")
+        }
+    }
+
+    /** a switch written the way this phone's own tile writes it ([LearnedSwitches]) */
+    private fun toggleLearned(label: String, entries: List<LearnedSwitches.Entry>, on: Boolean): String {
+        val query = LearnedSwitches.stateQuery(entries)
+        val want = RootShell.quote(LearnedSwitches.expected(entries, on))
+        val r = RootShell.run(
+            "s=\$($query 2>/dev/null); if [ \"\$s\" = $want ]; then echo $ALREADY; else " +
+                    "${LearnedSwitches.writeCommand(entries, on)}; fi"
         )
         return when {
             r.ok && r.output.contains(ALREADY) -> ok("$label 本来就是${if (on) "开" else "关"}着的")
-            r.ok -> ok(done)
+            r.ok -> ok("$label 已${if (on) "打开" else "关闭"}")
             else -> err("执行失败（${r.code}）：${r.output.take(200).ifEmpty { "可能没有授予 root" }}")
         }
     }
@@ -819,6 +857,11 @@ class Tools(private val ctx: Context, private val host: Host) {
         private const val GRAMOPHONE = "org.akanework.gramophone"
         private const val MUSIC_MIN_SCORE = 0.6
         private const val ALREADY = "__ALREADY__"
+        private const val CHANGED = "__CHANGED__"
+        private const val UNCHANGED = "__UNCHANGED__"
+
+        /** the lowest level set_brightness writes (0 may mean "off" to some displays) */
+        private const val MIN_BRIGHTNESS = 0.004f
 
         /**
          * the tools of the assistant sheet, or of the call companion (chat only, see

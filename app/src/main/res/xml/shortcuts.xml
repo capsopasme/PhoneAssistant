@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- long-press the icon: the assistant sheet itself (on ColorOS there is no corner swipe) -->
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_assist"
+        android:shortcutId="assist"
+        android:shortcutLongLabel="@string/shortcut_assist_long"
+        android:shortcutShortLabel="@string/shortcut_assist">
+        <intent
+            android:action="com.capsopasme.assistant.START"
+            android:targetClass="com.capsopasme.assistant.ui.AssistActivity"
+            android:targetPackage="com.capsopasme.assistant" />
+    </shortcut>
     <shortcut
         android:enabled="true"
         android:icon="@drawable/ic_shortcut_call"

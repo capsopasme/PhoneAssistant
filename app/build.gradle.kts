@@ -23,8 +23,8 @@ android {
         applicationId = "com.capsopasme.assistant"
         minSdk = 34
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.8.2"
+        versionCode = 11
+        versionName = "0.9.0"
         ndk {
             // QNN / sherpa-onnx native libraries are only built for arm64
             abiFilters += "arm64-v8a"

@@ -50,16 +50,8 @@ object WebSearch {
             throw IOException("网址不合法")
         }
         if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrBlank()) throw IOException("只能打开 http/https 网页")
-        // a public web page, not something on the phone or the local network
-        val addresses = try {
-            InetAddress.getAllByName(uri.host)
-        } catch (_: Exception) {
-            throw IOException("找不到网站 ${uri.host}")
-        }
-        if (addresses.any { it.isLoopbackAddress || it.isSiteLocalAddress || it.isLinkLocalAddress || it.isAnyLocalAddress }) {
-            throw IOException("不能打开本机或局域网地址")
-        }
-        val (contentType, body) = get(uri.toString())
+        // a public web page, not something on the phone or the local network (every redirect too)
+        val (contentType, body) = get(uri.toString(), publicOnly = true)
         return when {
             contentType.isEmpty() || contentType.contains("html") -> pageTitle(body) to clip(pageText(body), maxChars)
             contentType.startsWith("text/") -> "" to clip(body.replace(SPACES, " ").trim(), maxChars)
@@ -181,10 +173,27 @@ object WebSearch {
     // ---------------------------------------------------------------------------------------------
     // fetching
 
-    /** (content type, decoded body); follows up to 5 redirects, http <-> https included */
-    private fun get(url: String): Pair<String, String> {
+    /** refuses hosts on the phone itself or the local network */
+    private fun checkPublic(url: URL) {
+        if (url.protocol.lowercase() !in setOf("http", "https") || url.host.isNullOrBlank()) throw IOException("只能打开 http/https 网页")
+        val addresses = try {
+            InetAddress.getAllByName(url.host)
+        } catch (_: Exception) {
+            throw IOException("找不到网站 ${url.host}")
+        }
+        if (addresses.any { it.isLoopbackAddress || it.isSiteLocalAddress || it.isLinkLocalAddress || it.isAnyLocalAddress }) {
+            throw IOException("不能打开本机或局域网地址")
+        }
+    }
+
+    /**
+     * (content type, decoded body); follows up to 5 redirects, http <-> https included.
+     * [publicOnly]: every hop must be a public host (a page could redirect to the local network)
+     */
+    private fun get(url: String, publicOnly: Boolean = false): Pair<String, String> {
         var target = url
         repeat(6) {
+            if (publicOnly) checkPublic(URL(target))
             val conn = URL(target).openConnection() as HttpURLConnection
             try {
                 conn.instanceFollowRedirects = false

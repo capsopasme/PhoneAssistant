@@ -30,6 +30,7 @@ import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
+import com.capsopasme.assistant.DeviceInfo
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.R
 import com.capsopasme.assistant.agent.Agent
@@ -202,6 +203,9 @@ class AssistActivity : Activity() {
         }
         setContentView(R.layout.activity_assist)
         prefs = Prefs(this)
+        // the system prompt names the ROM: look it up while the user is still talking
+        val app = applicationContext
+        Thread({ DeviceInfo.rom(app) }, "rom-info").start()
         asr = AsrClient(this, asrListener)
         silencer = MediaSilencer(this)
         silencer.engage()

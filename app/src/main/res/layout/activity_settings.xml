@@ -90,9 +90,50 @@
                 android:text="打开系统设置" />
         </LinearLayout>
 
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/tileAdd"
+                style="@style/RowButton"
+                android:text="加到控制中心（语音助手）" />
+            <Button
+                android:id="@+id/tileAddCall"
+                style="@style/RowButton"
+                android:text="加到控制中心（噜噜）" />
+        </LinearLayout>
+
+        <!-- filled in by code: the ways in differ between ColorOS and AOSP-like systems -->
         <TextView
-            style="@style/Hint"
-            android:text="手势导航下从屏幕左下角或右下角斜向上滑唤起（系统设置 → 系统 → 手势 → 系统导航 → 手势导航旁的齿轮 → 打开“滑动调用助理”）。\nQuickBall 等应用可启动 Intent 动作 com.capsopasme.assistant.START。" />
+            android:id="@+id/entryHint"
+            style="@style/Hint" />
+
+        <!-- background (ColorOS kills and blocks apps in the background) -->
+        <TextView style="@style/SectionTitle" android:text="后台运行" />
+
+        <TextView
+            android:id="@+id/bgStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/bgRoot"
+                style="@style/RowButton"
+                android:text="放行电池优化（root）" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/bgAppInfo"
+                style="@style/RowButton"
+                android:text="语音助手的应用详情" />
+            <Button
+                android:id="@+id/bgMossInfo"
+                style="@style/RowButton"
+                android:text="MOSS 的应用详情" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/bgHint"
+            style="@style/Hint" />
 
         <!-- llm -->
         <TextView style="@style/SectionTitle" android:text="大模型" />
@@ -235,6 +276,10 @@
                 style="@style/RowButton"
                 android:text="系统 TTS 设置" />
             <Button
+                android:id="@+id/ttsDefaultRoot"
+                style="@style/RowButton"
+                android:text="设为首选（root）" />
+            <Button
                 android:id="@+id/ttsTest"
                 style="@style/RowButton"
                 android:text="试听" />
@@ -322,6 +367,24 @@
             style="@style/Hint"
             android:text="唤出助手或开始通话时，一下重震，一个反相的球从中心炸开，扫过之后整个屏幕定格、褪色，时间像停住了一样；关闭卡片或挂断时反向恢复。需要 root 截一张当前屏幕（只在内存里，用完即丢，不保存）；禁止截屏的应用里换成简化版。只震动，不出声；开麦不等动画，张嘴就能说。" />
 
+        <!-- OEM switches learned from the phone's own tiles -->
+        <TextView style="@style/SectionTitle" android:text="系统开关适配" />
+
+        <TextView
+            android:id="@+id/learnStatus"
+            style="@style/Body" />
+
+        <LinearLayout style="@style/ButtonRow">
+            <Button
+                android:id="@+id/learnSwitch"
+                style="@style/RowButton"
+                android:text="教它认一个开关" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Hint"
+            android:text="护眼模式、极暗模式、省电模式默认用原生安卓的方式开关。ColorOS 有自己的护眼和省电实现，如果说“打开护眼模式”它回答已打开、屏幕却没变化，就在这里教它一次：按提示在控制中心把那个开关关→开→关，它会记下系统里跟着变的设置项，以后照着改（需要 root）。学完可以马上试，没效果就忘掉。" />
+
         <!-- permissions -->
         <TextView style="@style/SectionTitle" android:text="权限" />
 
@@ -342,6 +405,6 @@
 
         <TextView
             style="@style/Hint"
-            android:text="麦克风：语音输入。通讯录：按姓名打电话/发短信。电话：确认后直接拨出（不授予则只打开拨号盘）。音乐：按歌名在本地曲库里找歌交给留声机播放。root：系统开关、亮度、锁屏。" />
+            android:text="麦克风：语音输入。通讯录：按姓名打电话/发短信。电话：确认后直接拨出（不授予则只打开拨号盘）。音乐：按歌名在本地曲库里找歌交给留声机播放。通知：通话进行中的通知（锁屏上挂断、静音）。root：系统开关、亮度、锁屏、时停截屏、熄屏时设闹钟。" />
     </LinearLayout>
 </ScrollView>

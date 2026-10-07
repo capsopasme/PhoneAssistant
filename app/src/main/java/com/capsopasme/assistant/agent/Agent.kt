@@ -3,6 +3,7 @@ package com.capsopasme.assistant.agent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.capsopasme.assistant.DeviceInfo
 import com.capsopasme.assistant.Prefs
 import com.capsopasme.assistant.llm.LlmClient
 import com.capsopasme.assistant.memory.MemoryStore
@@ -319,8 +320,9 @@ class Agent(
         val time = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm EEEE", Locale.CHINA))
         val city = prefs.defaultCity.ifBlank { "未设置" }
         if (isCompanion) return companionPrompt(time, now, city)
+        val rom = DeviceInfo.rom(context).name
         return """
-            你是运行在用户安卓手机（一加 Ace 5，LineageOS，已 root）上的语音助手。用户的话来自语音识别，可能有同音错字，按最合理的意思理解。
+            你是运行在用户安卓手机（一加 Ace 5，$rom，已 root）上的语音助手。用户的话来自语音识别，可能有同音错字，按最合理的意思理解。
             现在是 $time（时区 ${now.zone.id}）。默认城市：$city。
             规则：
             - 能用工具完成的操作就直接调用工具，不要只给建议；一句话里有多个操作就依次调用多个工具。
